@@ -36,8 +36,21 @@ from .sizing import (
     target_units,
 )
 
-# griglia dei check: 10:00, 10:30, ..., 15:30 — CONGELATA da spec
-CHECK_TIMES = [time(h, m) for h in range(10, 16) for m in (0, 30)]
+def check_times(interval_min: int = 30) -> list[time]:
+    """Griglia dei check: da 10:00 ogni `interval_min` minuti, ultimo <= 15:45.
+
+    30 minuti (10:00 ... 15:30) e' il valore del paper, CONGELATO per la
+    replica; altri intervalli sono ammessi SOLO nel protocollo Maroy.
+    """
+    out, minutes = [], 10 * 60
+    while minutes <= 15 * 60 + 45:
+        out.append(time(minutes // 60, minutes % 60))
+        minutes += interval_min
+    return out
+
+
+# griglia del paper: 10:00, 10:30, ..., 15:30
+CHECK_TIMES = check_times(30)
 FORCED_EXIT_TIME = time(15, 59)
 
 
@@ -87,13 +100,15 @@ def run_backtest(
     vol_target: float = VOL_TARGET,
     max_leverage: float = MAX_LEVERAGE,
     vol_lookback: int = VOL_LOOKBACK,
+    check_interval_min: int = 30,
 ) -> BacktestResult:
     """Esegue il backtest su barre 1-minuto RTH (vedi noise_area per il formato).
 
-    exit_mode: "base" (banda opposta) o "final" (max/min di VWAP e banda di entry).
+    exit_mode: "base" (banda opposta), "final" (max/min di VWAP e banda di
+    entry, variante del paper) o "vwap" (solo VWAP, variante Maroy).
     """
-    if exit_mode not in ("base", "final"):
-        raise ValueError("exit_mode deve essere 'base' o 'final'")
+    if exit_mode not in ("base", "final", "vwap"):
+        raise ValueError("exit_mode deve essere 'base', 'final' o 'vwap'")
     if costs is None:
         costs = CostModel()
 
@@ -153,11 +168,13 @@ def run_backtest(
 
     trades_open_cost = [0.0]  # costo di apertura del trade corrente
 
+    grid = check_times(check_interval_min)
+
     for day, day_bars in ind.groupby(_day_key(ind.index)):
         sd = sigma_d.get(day, np.nan)
         times = day_bars.index.time
 
-        for t in CHECK_TIMES:
+        for t in grid:
             # ultima barra disponibile <= check time: se il minuto esatto
             # manca (feed rado) si usa l'ultimo prezzo battuto
             pos = np.searchsorted(times, t, side="right") - 1
@@ -175,22 +192,28 @@ def run_backtest(
             short_sig = px < lower
 
             if side > 0:
+                long_trail = (
+                    lower if exit_mode == "base"
+                    else max(vwap, upper) if exit_mode == "final"
+                    else vwap
+                )
                 if short_sig:  # flip long -> short
                     _close_position(px, ts, "flip")
                     if np.isfinite(sd):
                         _open_position(-1, px, ts, sd)
-                elif (exit_mode == "base" and px < lower) or (
-                    exit_mode == "final" and px < max(vwap, upper)
-                ):
+                elif px < long_trail:
                     _close_position(px, ts, "trail")
             elif side < 0:
+                short_trail = (
+                    upper if exit_mode == "base"
+                    else min(vwap, lower) if exit_mode == "final"
+                    else vwap
+                )
                 if long_sig:  # flip short -> long
                     _close_position(px, ts, "flip")
                     if np.isfinite(sd):
                         _open_position(1, px, ts, sd)
-                elif (exit_mode == "base" and px > upper) or (
-                    exit_mode == "final" and px > min(vwap, lower)
-                ):
+                elif px > short_trail:
                     _close_position(px, ts, "trail")
             else:
                 if (long_sig or short_sig) and np.isfinite(sd):

@@ -112,6 +112,48 @@ def regime_table(daily_returns: pd.Series, vix_close: pd.Series) -> pd.DataFrame
     return pd.DataFrame(rows).T
 
 
+def deflated_sharpe(
+    daily_returns: pd.Series,
+    trial_sharpes_daily: "list[float] | np.ndarray",
+) -> dict:
+    """Deflated Sharpe Ratio (Bailey & Lopez de Prado 2014).
+
+    Probabilita' che lo Sharpe osservato del vincente superi l'expected max
+    Sharpe di N trial sotto l'ipotesi nulla (nessuna skill), con correzione
+    per skew e curtosi dei rendimenti. Tutto in unita' giornaliere.
+
+    trial_sharpes_daily: Sharpe giornalieri (non annualizzati) di TUTTI i
+    trial eseguiti, incluso il vincente.
+    """
+    from scipy.stats import norm
+
+    r = daily_returns.dropna()
+    t_len = len(r)
+    sr = r.mean() / r.std()  # Sharpe giornaliero osservato
+    skew = r.skew()
+    kurt = r.kurt() + 3.0  # da eccesso a curtosi "raw"
+
+    trials = np.asarray(trial_sharpes_daily, dtype=float)
+    n = len(trials)
+    var_sr = trials.var(ddof=1)
+
+    gamma = 0.5772156649015329  # Eulero-Mascheroni
+    e = np.e
+    # expected max SR sotto H0 (SR veri tutti nulli)
+    sr0 = np.sqrt(var_sr) * (
+        (1 - gamma) * norm.ppf(1 - 1 / n) + gamma * norm.ppf(1 - 1 / (n * e))
+    )
+    denom = np.sqrt(1 - skew * sr + (kurt - 1) / 4 * sr**2)
+    z = (sr - sr0) * np.sqrt(t_len - 1) / denom
+    return {
+        "sr_daily": sr,
+        "sr0_daily": float(sr0),
+        "dsr": float(norm.cdf(z)),
+        "n_trials": n,
+        "t_obs": t_len,
+    }
+
+
 def format_summary(perf: dict, tstats: dict | None = None) -> str:
     lines = []
     fmt = {
