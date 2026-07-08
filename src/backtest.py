@@ -155,12 +155,15 @@ def run_backtest(
 
     for day, day_bars in ind.groupby(_day_key(ind.index)):
         sd = sigma_d.get(day, np.nan)
-        by_time = day_bars.set_index(day_bars.index.time)
+        times = day_bars.index.time
 
         for t in CHECK_TIMES:
-            if t not in by_time.index:
+            # ultima barra disponibile <= check time: se il minuto esatto
+            # manca (feed rado) si usa l'ultimo prezzo battuto
+            pos = np.searchsorted(times, t, side="right") - 1
+            if pos < 0:
                 continue
-            row = by_time.loc[t]
+            row = day_bars.iloc[pos]
             px, upper, lower, vwap = (
                 row["close"], row["upper"], row["lower"], row["vwap"]
             )

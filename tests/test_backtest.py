@@ -83,6 +83,18 @@ class TestEntriesAndExits:
         assert tr["entry_time"].time() == pd.Timestamp("15:30").time()
         assert tr["exit_reason"] == "eod"
 
+    def test_missing_check_bar_uses_last_available_price(self):
+        # feed rado: il minuto 10:00 manca; il breakout e' gia' avvenuto alle
+        # 09:59, quindi il check delle 10:00 deve leggere l'ultima barra
+        # disponibile ed entrare alle 10:00 (non alle 10:30)
+        path = path_step(O3, 1.005 * O3, 29)  # breakout dalle 09:59
+        day3 = make_day(D[3], O3, path)
+        day3 = day3.drop(day3.index[30])  # rimuove la barra delle 10:00
+        bars = stack_days(*_history(), day3)
+        res = run_backtest(bars, exit_mode="final", costs=NO_COSTS, **KW)
+        assert len(res.trades) == 1
+        assert res.trades.iloc[0]["entry_time"].time() == pd.Timestamp("10:00").time()
+
     def test_warmup_days_do_not_trade(self):
         # breakout enorme nel giorno 1 (in warmup: niente sigma daily) -> no trade
         bars = stack_days(
