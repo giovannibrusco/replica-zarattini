@@ -1,35 +1,31 @@
-"""Download barre 1-minuto ES/MES da Interactive Brokers (TWS o IB Gateway).
+"""Download barre 1-minuto ES/MES da IB: singoli contratti trimestrali +
+stitching con roll al volume crossover + back-adjustment additivo (spec).
 
-Uso (sulla macchina dove gira IB Gateway, gia' loggato e con API abilitata):
+Perche' non il contratto continuo di IB: (a) errore 10339 — IB non permette
+piu' endDateTime sui CONTFUT, quindi niente paginazione all'indietro;
+(b) il CONTFUT non e' back-adjusted. I singoli contratti invece sono
+scaricabili fino a ~2 anni dopo la scadenza (limite IB): si ottengono
+quindi ~2 anni di continuo costruito secondo la spec.
+
+Uso (sulla macchina dove gira IB Gateway loggato, API abilitata):
 
     pip install ib_async pandas pyarrow
-    python -m src.download_ib --port 4001 --out data/es_1min.parquet
+    python -m src.download_ib --port 4001     # 4002 se Gateway paper
 
-    # Gateway live: porta 4001 | Gateway paper: 4002
-    # TWS live: 7496 | TWS paper: 7497
+Output:
+    data/es_1min.parquet   contratto continuo back-adjusted, RTH, tz ET
+    data/es_rolls.csv      tabella dei roll (data, contratti, offset)
+    data/ib_raw/*.parquet  dati grezzi per contratto (riusati al riavvio)
 
-Caratteristiche:
-- contratto continuo IB (CONTFUT): storico lungo, oltre il limite dei ~2
-  anni che IB impone sui contratti scaduti
-- scarica all'indietro dal presente fino a --start (o al primo dato
-  disponibile), a blocchi di --duration (default "2 D", prudente)
-- checkpoint su parquet ogni --checkpoint-every blocchi: se il processo si
-  interrompe, RILANCIARE LO STESSO COMANDO riprende da dove era
-- al riavvio fa anche il "top-up" in avanti (dall'ultimo dato salvato a ora)
-- rispetta il pacing IB (pausa tra richieste, backoff sulle violazioni)
+Riprendibile: i contratti gia' scaricati non vengono richiesti di nuovo;
+lo stitching viene ricalcolato a ogni esecuzione dai file grezzi.
 
-⚠️ Deviazione documentata dalla spec: il roll del CONTFUT e' quello di IB
-(switch del front alla scadenza), non il volume-crossover, e NON c'e'
-back-adjustment. La strategia e' flat overnight quindi i salti di roll non
-toccano il PnL dei trade; toccano solo prev_close (ancoraggio bande) e la
-vol daily nei ~4 giorni di roll l'anno. Da flaggare nella validazione.
-
-Requisiti lato IB:
-- API abilitata: Configure -> Settings -> API -> "Enable ActiveX and Socket
-  Clients" (lasciare "Read-Only API" ATTIVO: per lo storico basta e non
-  permette ordini)
-- sottoscrizione dati CME (es. "CME Real-Time (NP,L1)", pochi $/mese
-  non-professional): senza, IB rifiuta lo storico dei futures (errore 162)
+Regola di roll (documentata, da spec): roll alla prima sessione RTH in cui
+il volume del contratto successivo supera quello del front (volume
+crossover); fallback = ultima sessione prima della scadenza. Il front vale
+fino alla sessione di roll inclusa, il successivo dalla sessione dopo.
+Back-adjustment additivo: offset = close(next) - close(front) alla
+sessione di roll, applicato cumulativamente all'indietro.
 """
 
 from __future__ import annotations
@@ -38,13 +34,16 @@ import argparse
 import os
 import sys
 import time as _time
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 import pandas as pd
 
 ET = "America/New_York"
-PAUSE_S = 2.0          # pausa tra richieste (pacing IB)
-PACING_WAIT_S = 65.0   # attesa dopo una pacing violation
+PAUSE_S = 2.0
+PACING_WAIT_S = 65.0
+OVERLAP_DAYS = 15          # finestra prima della scadenza del front
+EXPIRED_LIMIT_DAYS = 700   # limite IB ~2 anni sui contratti scaduti
+RTH_START, RTH_LAST = "09:30", "15:59"
 
 
 def _connect(host: str, port: int, client_id: int):
@@ -57,159 +56,227 @@ def _connect(host: str, port: int, client_id: int):
     return ib
 
 
-def _qualify(ib, symbol: str, exchange: str):
-    from ib_async import ContFuture
+def quarterly_expiries(now: pd.Timestamp) -> list[str]:
+    """YYYYMM dei contratti trimestrali: dal piu' vecchio scaricabile
+    (~2 anni fa) al front attuale (+1 di margine)."""
+    months = []
+    start = now - pd.Timedelta(days=EXPIRED_LIMIT_DAYS)
+    y = start.year
+    while y <= now.year + 1:
+        for m in (3, 6, 9, 12):
+            ts = pd.Timestamp(year=y, month=m, day=20, tz="UTC")
+            if start <= ts <= now + pd.Timedelta(days=120):
+                months.append(f"{y}{m:02d}")
+        y += 1
+    return months
 
-    contracts = ib.qualifyContracts(ContFuture(symbol, exchange, "USD"))
-    if not contracts:
-        sys.exit(f"Contratto continuo {symbol}@{exchange} non risolto")
-    c = contracts[0]
-    print(f"Contratto: {c.localSymbol or c.symbol} conId={c.conId} ({exchange})")
-    return c
+
+def _qualify_contracts(ib, symbol: str, exchange: str, months: list[str]):
+    from ib_async import Contract
+
+    out = []
+    for ym in months:
+        c = Contract(
+            secType="FUT", symbol=symbol, exchange=exchange, currency="USD",
+            lastTradeDateOrContractMonth=ym, includeExpired=True,
+        )
+        got = ib.qualifyContracts(c)
+        if got:
+            q = got[0]
+            expiry = pd.Timestamp(q.lastTradeDateOrContractMonth, tz="UTC")
+            out.append((expiry, q))
+            print(f"  {q.localSymbol}: scadenza {expiry.date()}")
+        else:
+            print(f"  {symbol} {ym}: non risolto (troppo vecchio?), salto")
+    out.sort(key=lambda t: t[0])
+    return out
 
 
-def _fetch_chunk(ib, contract, end_dt: datetime, duration: str) -> pd.DataFrame:
-    """Un blocco di barre 1-min RTH che termina a end_dt (UTC). Gestisce
-    retry su pacing violation."""
+def _fetch_range(ib, contract, start: pd.Timestamp, end: pd.Timestamp,
+                 duration: str, label: str) -> pd.DataFrame:
+    """Barre 1-min RTH [start, end] paginando all'indietro da end."""
     from ib_async import util
 
-    for attempt in range(5):
-        try:
-            bars = ib.reqHistoricalData(
-                contract,
-                endDateTime=end_dt,
-                durationStr=duration,
-                barSizeSetting="1 min",
-                whatToShow="TRADES",
-                useRTH=True,
-                formatDate=2,  # timestamp UTC
-            )
-            df = util.df(bars)
-            if df is None or df.empty:
-                return pd.DataFrame()
-            df = df.set_index("date")[["open", "high", "low", "close", "volume"]]
-            df.index = pd.DatetimeIndex(df.index).tz_convert(ET)
-            return df
-        except Exception as exc:
-            msg = str(exc).lower()
-            if "pacing" in msg or "violation" in msg:
-                print(f"  pacing violation, attendo {PACING_WAIT_S:.0f}s...")
-                _time.sleep(PACING_WAIT_S)
-            elif attempt < 4:
-                print(f"  errore ({exc}), retry {attempt + 1}...")
-                _time.sleep(5 * (attempt + 1))
-            else:
-                raise
-    return pd.DataFrame()
-
-
-def _save(df: pd.DataFrame, path: str) -> None:
-    df = df[~df.index.duplicated(keep="first")].sort_index()
-    df.to_parquet(path)
-
-
-def download(
-    host: str,
-    port: int,
-    client_id: int,
-    symbol: str,
-    exchange: str,
-    start: datetime | None,
-    duration: str,
-    out: str,
-    checkpoint_every: int,
-) -> None:
-    ib = _connect(host, port, client_id)
-    contract = _qualify(ib, symbol, exchange)
-
-    head = ib.reqHeadTimeStamp(contract, whatToShow="TRADES", useRTH=True)
-    head = pd.Timestamp(head).tz_convert("UTC") if pd.Timestamp(head).tzinfo else pd.Timestamp(head, tz="UTC")
-    print(f"Primo dato disponibile su IB: {head}")
-    floor_dt = max(head, pd.Timestamp(start, tz="UTC")) if start else head
-    print(f"Scarico fino a: {floor_dt}")
-
-    existing = pd.read_parquet(out) if os.path.exists(out) else pd.DataFrame()
-    if not existing.empty:
-        print(f"Riprendo da checkpoint: {len(existing):,} barre "
-              f"[{existing.index[0]} -> {existing.index[-1]}]")
-
-    frames = [existing] if not existing.empty else []
-    n_chunks = 0
-
-    def _run_leg(end_dt: pd.Timestamp, stop_at: pd.Timestamp, label: str):
-        """Scarica all'indietro da end_dt fino a stop_at."""
-        nonlocal n_chunks, frames
+    frames = []
+    end_dt = end
+    empty_streak = 0
+    while end_dt > start:
+        for attempt in range(5):
+            try:
+                bars = ib.reqHistoricalData(
+                    contract, endDateTime=end_dt.to_pydatetime(),
+                    durationStr=duration, barSizeSetting="1 min",
+                    whatToShow="TRADES", useRTH=True, formatDate=2,
+                )
+                break
+            except Exception as exc:
+                msg = str(exc).lower()
+                if "pacing" in msg or "violation" in msg:
+                    print(f"    pacing violation, attendo {PACING_WAIT_S:.0f}s")
+                    _time.sleep(PACING_WAIT_S)
+                elif attempt < 4:
+                    _time.sleep(5 * (attempt + 1))
+                else:
+                    raise
+        df = util.df(bars)
+        if df is None or df.empty:
+            empty_streak += 1
+            if empty_streak >= 4:
+                break
+            end_dt -= timedelta(days=4)
+            continue
         empty_streak = 0
-        while end_dt > stop_at:
-            chunk = _fetch_chunk(ib, contract, end_dt.to_pydatetime(), duration)
-            if chunk.empty:
-                empty_streak += 1
-                if empty_streak >= 5:
-                    print(f"  {label}: 5 blocchi vuoti consecutivi, stop")
-                    break
-                end_dt -= timedelta(days=4)  # salta weekend/festivita'
-                continue
-            empty_streak = 0
-            frames.append(chunk)
-            earliest = chunk.index[0].tz_convert("UTC")
-            print(f"  {label} {earliest.date()}: +{len(chunk)} barre")
-            if earliest >= end_dt:  # nessun progresso: forza lo step
-                end_dt -= timedelta(days=2)
-            else:
-                end_dt = earliest
-            n_chunks += 1
-            if n_chunks % checkpoint_every == 0:
-                _save(pd.concat(frames), out)
-                print(f"  checkpoint: salvate {sum(len(f) for f in frames):,} barre")
-            _time.sleep(PAUSE_S)
+        chunk = df.set_index("date")[["open", "high", "low", "close", "volume"]]
+        chunk.index = pd.DatetimeIndex(chunk.index).tz_convert(ET)
+        frames.append(chunk)
+        earliest = chunk.index[0].tz_convert("UTC")
+        print(f"    {label} {earliest.date()}: +{len(chunk)}")
+        end_dt = earliest if earliest < end_dt else end_dt - timedelta(days=2)
+        _time.sleep(PAUSE_S)
+    if not frames:
+        return pd.DataFrame()
+    out = pd.concat(frames)
+    return out[~out.index.duplicated(keep="first")].sort_index()
 
-    now = pd.Timestamp.now(tz="UTC")
+
+def download_contract(ib, contract, expiry, prev_expiry, raw_dir: str,
+                      duration: str, now: pd.Timestamp) -> pd.DataFrame:
+    """Scarica (o riusa) le barre del contratto nella sua finestra da front."""
+    sym = contract.localSymbol
+    path = os.path.join(raw_dir, f"{sym}.parquet")
+    win_start = prev_expiry - pd.Timedelta(days=OVERLAP_DAYS)
+    win_end = min(expiry, now)
+
+    existing = pd.read_parquet(path) if os.path.exists(path) else pd.DataFrame()
     if not existing.empty:
-        # top-up in avanti: dal dato piu' recente salvato a ora
-        latest = existing.index[-1].tz_convert("UTC")
-        if now - latest > pd.Timedelta(hours=1):
-            _run_leg(now, latest, "top-up")
-        # backfill: dal dato piu' vecchio salvato all'inizio richiesto
-        _run_leg(existing.index[0].tz_convert("UTC"), floor_dt, "backfill")
-    else:
-        _run_leg(now, floor_dt, "download")
+        have_end = existing.index[-1].tz_convert("UTC")
+        if have_end >= win_end - pd.Timedelta(days=3):
+            print(f"  {sym}: gia' completo ({len(existing):,} barre), riuso")
+            return existing
+        print(f"  {sym}: top-up da {have_end.date()}")
+        add = _fetch_range(ib, contract, have_end, win_end, duration, sym)
+        existing = pd.concat([existing, add])
+        existing = existing[~existing.index.duplicated(keep="first")].sort_index()
+        existing.to_parquet(path)
+        return existing
 
-    final = pd.concat(frames) if frames else pd.DataFrame()
-    if final.empty:
-        sys.exit("Nessun dato scaricato.")
-    _save(final, out)
-    final = pd.read_parquet(out)
-    print(f"\nFATTO: {len(final):,} barre in {out}")
-    print(f"Range: {final.index[0]} -> {final.index[-1]}")
-    ib.disconnect()
+    print(f"  {sym}: scarico [{win_start.date()} -> {win_end.date()}]")
+    df = _fetch_range(ib, contract, win_start, win_end, duration, sym)
+    if not df.empty:
+        df.to_parquet(path)
+    return df
+
+
+def stitch(per_contract: list[tuple[str, pd.Timestamp, pd.DataFrame]]):
+    """Continuo back-adjusted da contratti ordinati per scadenza.
+
+    Ritorna (continuo, tabella roll). Volume crossover su volumi RTH."""
+    def rth(df):
+        return df.between_time(RTH_START, RTH_LAST)
+
+    def daily_close(df):
+        r = rth(df)
+        return r["close"].groupby(r.index.normalize()).last()
+
+    def daily_vol(df):
+        r = rth(df)
+        return r["volume"].groupby(r.index.normalize()).sum()
+
+    rolls = []
+    segments = []
+    seg_start = None  # inizio (esclusivo) del segmento del contratto corrente
+
+    for i, (sym, expiry, df) in enumerate(per_contract):
+        if i + 1 < len(per_contract):
+            nxt_sym, nxt_expiry, nxt_df = per_contract[i + 1]
+            va, vb = daily_vol(df), daily_vol(nxt_df)
+            common = va.index.intersection(vb.index)
+            cross = [d for d in common if vb[d] > va[d]]
+            if cross:
+                roll_day = cross[0]
+            else:
+                sessions = va.index[va.index < expiry.tz_convert(ET).normalize()]
+                roll_day = sessions[-1]
+                print(f"  ATTENZIONE {sym}: nessun crossover, roll forzato {roll_day.date()}")
+            ca, cb = daily_close(df), daily_close(nxt_df)
+            offset = float(cb[roll_day] - ca[roll_day])
+            rolls.append({"roll_day": roll_day.date(), "from": sym,
+                          "to": nxt_sym, "offset": offset})
+        else:
+            roll_day = None
+
+        seg = df if seg_start is None else df[df.index.normalize() > seg_start]
+        if roll_day is not None:
+            seg = seg[seg.index.normalize() <= roll_day]
+        segments.append(seg)
+        seg_start = roll_day
+
+    # back-adjustment additivo cumulativo (l'ultimo segmento resta invariato)
+    adjusted = []
+    n = len(segments)
+    for i, seg in enumerate(segments):
+        offset = sum(r["offset"] for r in rolls[i:]) if i < n - 1 else 0.0
+        s = seg.copy()
+        for col in ("open", "high", "low", "close"):
+            s[col] = s[col] + offset
+        adjusted.append(s)
+
+    cont = pd.concat(adjusted)
+    cont = cont[~cont.index.duplicated(keep="first")].sort_index()
+    return cont, pd.DataFrame(rolls)
 
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=4001,
-                   help="4001 gw live, 4002 gw paper, 7496 TWS live, 7497 TWS paper")
+                   help="4001 gw live, 4002 gw paper, 7496/7497 TWS")
     p.add_argument("--client-id", type=int, default=17)
     p.add_argument("--symbol", default="ES", help="ES o MES")
     p.add_argument("--exchange", default="CME")
-    p.add_argument("--start", default=None,
-                   help="YYYY-MM-DD; default: tutto lo storico disponibile")
-    p.add_argument("--duration", default="2 D",
-                   help='blocco per richiesta (es. "2 D", "1 W"); 2 D e\' prudente')
+    p.add_argument("--duration", default="2 D")
     p.add_argument("--out", default=None)
-    p.add_argument("--checkpoint-every", type=int, default=25)
+    p.add_argument("--raw-dir", default="data/ib_raw")
     args = p.parse_args()
 
-    start = (
-        datetime.fromisoformat(args.start).replace(tzinfo=timezone.utc)
-        if args.start else None
-    )
     out = args.out or f"data/{args.symbol.lower()}_1min.parquet"
+    os.makedirs(args.raw_dir, exist_ok=True)
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    download(
-        args.host, args.port, args.client_id, args.symbol, args.exchange,
-        start, args.duration, out, args.checkpoint_every,
+
+    now = pd.Timestamp.now(tz="UTC")
+    ib = _connect(args.host, args.port, args.client_id)
+
+    print("Risolvo i contratti trimestrali:")
+    contracts = _qualify_contracts(
+        ib, args.symbol, args.exchange, quarterly_expiries(now)
     )
+    if len(contracts) < 2:
+        sys.exit("Servono almeno 2 contratti risolti per lo stitching.")
+
+    per_contract = []
+    prev_expiry = contracts[0][0] - pd.Timedelta(days=95)  # finestra del piu' vecchio
+    for expiry, c in contracts:
+        if expiry - now > pd.Timedelta(days=100):
+            continue  # contratti lontani: non ancora front, inutili
+        df = download_contract(ib, c, expiry, prev_expiry, args.raw_dir,
+                               args.duration, now)
+        if not df.empty:
+            per_contract.append((c.localSymbol, expiry, df))
+        else:
+            print(f"  {c.localSymbol}: nessun dato (oltre il limite dei 2 anni?)")
+        prev_expiry = expiry
+
+    if len(per_contract) < 2:
+        sys.exit("Dati insufficienti per lo stitching.")
+
+    print("\nStitching (roll al volume crossover, back-adjust additivo):")
+    cont, rolls = stitch(per_contract)
+    print(rolls.to_string(index=False))
+    rolls.to_csv(out.replace(".parquet", "_rolls.csv"), index=False)
+    cont.to_parquet(out)
+    print(f"\nFATTO: {len(cont):,} barre in {out}")
+    print(f"Range: {cont.index[0]} -> {cont.index[-1]}")
+    ib.disconnect()
 
 
 if __name__ == "__main__":
