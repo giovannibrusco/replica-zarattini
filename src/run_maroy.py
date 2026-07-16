@@ -10,7 +10,7 @@ Fasi, tutte meccaniche (nessuna discrezionalita'):
 
 Uso:
     python -m src.run_maroy --data data/spy_1min.parquet \
-        --out notebooks/maroy_experiment.md
+        --out reports/maroy_experiment.md
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ def run_variant(bars: pd.DataFrame, variant: tuple, eval_start: pd.Timestamp) ->
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--data", default="data/spy_1min.parquet")
-    p.add_argument("--out", default="notebooks/maroy_experiment.md")
+    p.add_argument("--out", default="reports/maroy_experiment.md")
     args = p.parse_args()
 
     rth = filter_rth(pd.read_parquet(args.data)).sort_index()

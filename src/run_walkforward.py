@@ -7,7 +7,7 @@ Fase 3: confronto con il controllo fisso sul periodo comune + report
 
 Uso:
     python -m src.run_walkforward --data data/spy_1min.parquet \
-        --out notebooks/walkforward_experiment.md
+        --out reports/walkforward_experiment.md
 """
 
 from __future__ import annotations
@@ -93,7 +93,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--data", default="data/spy_1min.parquet")
     p.add_argument("--cache", default="data/wf_variant_returns.parquet")
-    p.add_argument("--out", default="notebooks/walkforward_experiment.md")
+    p.add_argument("--out", default="reports/walkforward_experiment.md")
     args = p.parse_args()
 
     rth = filter_rth(pd.read_parquet(args.data)).sort_index()

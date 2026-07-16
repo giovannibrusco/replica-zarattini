@@ -2,7 +2,7 @@
 
 Uso:
     python -m src.run_validation --data data/spy_1min.parquet \
-        --vix data/vix_history.csv --out notebooks/validation.md
+        --vix data/vix_history.csv --out reports/validation.md
 
 Il VIX (opzionale) si scarica da:
     https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv
@@ -55,7 +55,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--data", default="data/spy_1min.parquet")
     p.add_argument("--vix", default="data/vix_history.csv")
-    p.add_argument("--out", default="notebooks/validation.md")
+    p.add_argument("--out", default="reports/validation.md")
     args = p.parse_args()
 
     rth = filter_rth(pd.read_parquet(args.data))
