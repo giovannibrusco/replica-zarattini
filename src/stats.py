@@ -54,7 +54,9 @@ def performance_summary(
     return out
 
 
-def trade_stats(trades: pd.DataFrame) -> dict:
+def trade_stats(trades: pd.DataFrame, unit_multiplier: float = 1.0) -> dict:
+    """unit_multiplier: 1 per azioni, 50 per ES, 5 per MES (serve per il
+    notional corretto nell'expectancy in bps)."""
     if trades.empty:
         return {"n_trades": 0}
     pnl = trades["net_pnl"]
@@ -65,7 +67,7 @@ def trade_stats(trades: pd.DataFrame) -> dict:
     payoff = avg_win / abs(avg_loss) if len(losses) and avg_loss != 0 else np.nan
 
     # rendimento per trade in bps del notional scambiato (confronto Quantitativo)
-    notional = trades["units"] * trades["entry_px"]
+    notional = trades["units"] * trades["entry_px"] * unit_multiplier
     ret_bps = (pnl / notional * 1e4).mean()
 
     # losing streak massima
