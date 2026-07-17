@@ -7,10 +7,7 @@
 
 Replica indipendente e validazione di **Zarattini, Aziz & Barbon (2024)** — *"Beat the Market: An Effective Intraday Momentum Strategy for S&P500 ETF (SPY)"* ([SSRN 4824172](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4824172)) — su **due strumenti e due fonti dati indipendenti**, con protocolli anti-overfitting congelati ex-ante.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/equity_spy_dark.png">
-  <img src="assets/equity_spy_light.png" alt="Crescita di $1: strategia final, base e SPY buy&hold, 2020-2026">
-</picture>
+![Crescita di $1: strategia final, base e SPY buy&hold, 2020-2026](assets/equity_spy_light.png)
 
 ## 🎯 TL;DR
 
@@ -42,37 +39,25 @@ flowchart LR
 
 ### 1 · L'edge c'era, e si è compresso
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/yearly_dark.png">
-  <img src="assets/yearly_light.png" alt="Rendimenti per anno: strategia vs SPY buy&hold">
-</picture>
+![Rendimenti per anno: strategia vs SPY buy&hold](assets/yearly_light.png)
 
 2020-2024: Sharpe 1.4–2.0 ogni anno, alfa 23-28%. Poi due anni sotto zero. Il 2022 è la firma del profilo "long volatility": la strategia guadagna proprio quando il mercato crolla.
 
 ### 2 · Il calo recente è reale — non è un artefatto dei dati
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/es_vs_spy_dark.png">
-  <img src="assets/es_vs_spy_light.png" alt="ES vs SPY, stessa strategia, stesso periodo: correlazione 0.97">
-</picture>
+![ES vs SPY, stessa strategia, stesso periodo: correlazione 0.97](assets/es_vs_spy_light.png)
 
 Stessa strategia su **ES** (futures CME via IB, VWAP e volumi veri, contratto continuo costruito con roll al volume crossover) e su **SPY** (feed IEX gratuito): rendimenti correlati **0.97**, stesso esito. Esclusi feed, costi (~0.4 bps/round trip) e stitching. → [`reports/validation_es.md`](reports/validation_es.md)
 
 ### 3 · Non è un problema di parametri
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/maroy_grid_dark.png">
-  <img src="assets/maroy_grid_light.png" alt="Griglia Maróy: Sharpe in-sample delle 27 varianti">
-</picture>
+![Griglia Maróy: Sharpe in-sample delle 27 varianti](assets/maroy_grid_light.png)
 
 Il follow-up di Maróy (2025) dichiarava Sharpe >3 ottimizzando i parametri. Rifatto **con disciplina** (protocollo congelato [prima dei risultati](docs/PROTOCOL_MAROY.md), selezione meccanica, Deflated Sharpe Ratio): il vincente in-sample delle 27 varianti è… **la configurazione originale del paper** (final / 14g / 30min, riquadro). Nessuna variante promossa. → [`reports/maroy_experiment.md`](reports/maroy_experiment.md)
 
 ### 4 · Nemmeno l'adattività: il walk-forward distrugge valore
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/walkforward_dark.png">
-  <img src="assets/walkforward_light.png" alt="Walk-forward trimestrale vs configurazione fissa">
-</picture>
+![Walk-forward trimestrale vs configurazione fissa](assets/walkforward_light.png)
 
 Riselezione trimestrale della variante migliore su Sharpe trailing 252g: **Sharpe 0.57 vs 0.92** della config fissa, 14 switch su 19, e la config migliore full-sample non viene selezionata *in nemmeno un trimestre* — la classifica a 1 anno tra varianti correlate è rumore. → [`reports/walkforward_experiment.md`](reports/walkforward_experiment.md)
 
