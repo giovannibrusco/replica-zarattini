@@ -53,8 +53,13 @@ def style(ax, t, ylog=False):
 
 
 def save(fig, name, t):
+    """Salva SVG (web, nitido) e PNG (app mobile GitHub: non rende gli SVG)."""
     fig.patch.set_facecolor(t["bg"])
-    fig.savefig(os.path.join(ASSETS, name), format="svg", bbox_inches="tight")
+    base = os.path.join(ASSETS, name.removesuffix(".svg"))
+    fig.savefig(base + ".svg", format="svg", bbox_inches="tight",
+                facecolor=t["bg"])
+    fig.savefig(base + ".png", format="png", dpi=160, bbox_inches="tight",
+                facecolor=t["bg"])
     plt.close(fig)
 
 
