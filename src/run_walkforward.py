@@ -1,4 +1,4 @@
-"""Esecuzione del walk-forward PROTOCOL_WALKFORWARD.md (commit 3ae8b7c).
+"""Esecuzione del walk-forward PROTOCOL_WALKFORWARD.md (commit dbf73fb).
 
 Fase 1: rendimenti giornalieri netti full-sample delle 27 varianti
         (cache in data/wf_variant_returns.parquet: 27 backtest costosi)
@@ -128,7 +128,7 @@ def main() -> None:
     # --- report ---
     buf = io.StringIO()
     w = buf.write
-    w("# Esperimento walk-forward — risultati (protocollo commit 3ae8b7c)\n\n")
+    w("# Esperimento walk-forward — risultati (protocollo commit dbf73fb)\n\n")
     w(f"Periodo valutato: {wf.index[0].date()} → {wf.index[-1].date()} "
       f"({len(wf)} giorni). Selezione trimestrale su Sharpe trailing "
       f"{WINDOW}g, universo = 27 varianti della lista chiusa.\n\n")

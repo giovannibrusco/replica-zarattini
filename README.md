@@ -77,16 +77,24 @@ Riselezione trimestrale della variante migliore su Sharpe trailing 252g: **Sharp
 ├── reports/                 # risultati: validazione SPY, ES, Maróy, walk-forward
 ├── docs/                    # SPEC, protocolli ex-ante congelati, CONCLUSIONS
 ├── scripts/make_charts.py   # rigenera i grafici del README (temi chiaro/scuro)
-└── data/                    # parquet 1-min (non versionati, tranne ES+roll table)
+└── data/                    # roll table ES + VIX (i parquet 1-min si rigenerano con gli script)
 ```
 
 ## 🚀 Quickstart
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/                      # 48 test, dati sintetici
+python -m pytest tests/                      # 48 test, dati sintetici (nessun dato esterno)
 
-# backtest ES sui dati inclusi nel repo (2024-05 → 2026-07)
+# 1 · Scarica i dati — i file 1-min grezzi NON sono nel repo (ToS IB/CME e Alpaca)
+export ALPACA_API_KEY=... ALPACA_SECRET_KEY=...          # account paper gratuito
+python -m src.download_alpaca --symbol SPY --start 2016-01-01   # SPY, gratis
+python -m src.download_ib --port 4001                          # ES, richiede IB Gateway + sub CME
+
+# 2 · Pipeline di validazione riproducibili → reports/
+python -m src.run_validation && python -m src.run_maroy && python -m src.run_walkforward
+
+# 3 · Backtest ES (dopo download_ib)
 python - <<'PY'
 import pandas as pd
 from src.backtest import run_backtest, CostModel
@@ -98,10 +106,6 @@ res = run_backtest(bars, exit_mode="final", costs=CostModel.es_futures(0.25),
 print(performance_summary(res.daily_returns))
 print(trade_stats(res.trades, unit_multiplier=50.0))
 PY
-
-# dati SPY (serve API key Alpaca gratuita) e pipeline complete
-python -m src.download_alpaca --symbol SPY --start 2016-01-01
-python -m src.run_validation && python -m src.run_maroy && python -m src.run_walkforward
 ```
 
 ## 📚 Dati
@@ -111,6 +115,8 @@ python -m src.run_validation && python -m src.run_maroy && python -m src.run_wal
 | Interactive Brokers | ES futures, 1-min | mag 2024 → lug 2026 | 9 contratti trimestrali, roll al volume crossover, back-adjust additivo ([roll table](data/es_1min_rolls.csv)) |
 | Alpaca (IEX, free) | SPY, 1-min | lug 2020 → lug 2026 | ~3% del volume consolidato: VWAP approssimato (validato vs ES: irrilevante) |
 | CBOE | VIX daily | 1990 → oggi | tabelle per regime di volatilità |
+
+> ⚠️ **I file 1-min grezzi non sono ridistribuiti** (ToS di IB/CME e Alpaca): si rigenerano con `download_ib.py` (ES, richiede account IB + sottoscrizione CME) e `download_alpaca.py` (SPY, chiave paper gratuita). Il repo include solo la [roll table](data/es_1min_rolls.csv) ES e il VIX (redistribuibile da CBOE).
 
 ## 🧭 Metodo anti-overfitting
 

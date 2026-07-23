@@ -1,4 +1,4 @@
-# Esperimento walk-forward — risultati (protocollo commit 3ae8b7c)
+# Esperimento walk-forward — risultati (protocollo commit dbf73fb)
 
 Periodo valutato: 2021-10-01 → 2026-07-08 (1194 giorni). Selezione trimestrale su Sharpe trailing 252g, universo = 27 varianti della lista chiusa.
 

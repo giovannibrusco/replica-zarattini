@@ -1,4 +1,4 @@
-# Esperimento Maróy — risultati (protocollo commit 4a98efe)
+# Esperimento Maróy — risultati (protocollo commit 4d0a7cc)
 
 Eseguito una sola volta il 2026-07-08. Selezione meccanica, nessuna variante aggiunta dopo il congelamento.
 

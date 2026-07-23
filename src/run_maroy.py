@@ -1,4 +1,4 @@
-"""Esecuzione del protocollo PROTOCOL_MAROY.md (congelato nel commit 4a98efe).
+"""Esecuzione del protocollo PROTOCOL_MAROY.md (congelato nel commit 4d0a7cc).
 
 Fasi, tutte meccaniche (nessuna discrezionalita'):
 1. 27 varianti su in-sample (fino al 2023-12-31, valutazione dal 2020-10-01
@@ -125,7 +125,7 @@ def main() -> None:
     # --- report ---
     buf = io.StringIO()
     w = buf.write
-    w("# Esperimento Maróy — risultati (protocollo commit 4a98efe)\n\n")
+    w("# Esperimento Maróy — risultati (protocollo commit 4d0a7cc)\n\n")
     w(f"Eseguito una sola volta il {pd.Timestamp.now(tz=ET).date()}. "
       "Selezione meccanica, nessuna variante aggiunta dopo il congelamento.\n\n")
 

@@ -1,7 +1,7 @@
 # Addendum ex-ante — Walk-forward sulla lista chiusa di varianti
 
 **Congelato il 2026-07-08, PRIMA di eseguire il walk-forward.**
-Estende PROTOCOL_MAROY.md (commit 4a98efe). Non aggiunge varianti: cambia
+Estende PROTOCOL_MAROY.md (commit 4d0a7cc). Non aggiunge varianti: cambia
 solo la procedura di selezione, da statica (un solo split) ad adattiva.
 
 ## Rapporto con l'esperimento precedente
