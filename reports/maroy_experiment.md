@@ -1,8 +1,8 @@
-# Esperimento Maróy — risultati (protocollo commit 4d0a7cc)
+# Maróy experiment — results (protocol commit 4d0a7cc)
 
-Eseguito una sola volta il 2026-07-08. Selezione meccanica, nessuna variante aggiunta dopo il congelamento.
+Run once, on 2026-07-08. Mechanical selection, no variant added after the freeze.
 
-## Griglia in-sample completa (2020-10-01 → 2023-12-31)
+## Full in-sample grid (2020-10-01 → 2023-12-31)
 
 | exit   |   lookback |   interval |   sharpe_ann | cagr   | max_dd   |   n_trades | win_rate   |   expectancy_bps |
 |:-------|-----------:|-----------:|-------------:|:-------|:---------|-----------:|:-----------|-----------------:|
@@ -34,28 +34,28 @@ Eseguito una sola volta il 2026-07-08. Selezione meccanica, nessuna variante agg
 | base   |         28 |         60 |         0.61 | +9.6%  | -29.5%   |        443 | 59.1%      |             4.12 |
 | base   |          7 |         15 |         0.52 | +8.7%  | -28.3%   |        606 | 55.0%      |             2.16 |
 
-## Vincente IS: `final` / lookback 14g / check 30min
+## IS winner: `final` / lookback 14d / check 30min
 
-- Sharpe IS: **1.73** (controllo IS: 1.73)
-- **Deflated Sharpe Ratio: 0.972** (N=27 trial; expected max SR sotto H0: 0.71 annualizzato)
+- IS Sharpe: **1.73** (IS control: 1.73)
+- **Deflated Sharpe Ratio: 0.972** (N=27 trials; expected max SR under H0: 0.71 annualised)
 - C1 (DSR ≥ 0.95): **PASS**
 
-## Out-of-sample (2024-01-01 → fine campione) — valutato una sola volta
+## Out-of-sample (2024-01-01 → end of sample) — evaluated once only
 
-|                  | Vincente   | Controllo (paper)   |
-|:-----------------|:-----------|:--------------------|
-| Sharpe           | 0.16       | 0.16                |
-| CAGR             | +1.3%      | +1.3%               |
-| Max DD           | -24.2%     | -24.2%              |
-| Trades           | 603        | 603                 |
-| Win rate         | 38.5%      | 38.5%               |
-| Expectancy (bps) | -0.17      | -0.17               |
+|                  | Winner   | Control (paper)   |
+|:-----------------|:---------|:------------------|
+| Sharpe           | 0.16     | 0.16              |
+| CAGR             | +1.3%    | +1.3%             |
+| Max DD           | -24.2%   | -24.2%            |
+| Trades           | 603      | 603               |
+| Win rate         | 38.5%    | 38.5%             |
+| Expectancy (bps) | -0.17    | -0.17             |
 
-- C2 (Sharpe OOS vincente > controllo): **FAIL**
-- C3 (Sharpe OOS vincente > 0): **PASS**
+- C2 (winner OOS Sharpe > control): **FAIL**
+- C3 (winner OOS Sharpe > 0): **PASS**
 
-## Verdetto
+## Verdict
 
-**Criteri non superati: resta la configurazione del paper.** Come da protocollo, l'esperimento e' chiuso e non si riapre con nuove varianti su questi stessi dati.
+**Criteria not met: the paper's configuration stands.** Per the protocol, the experiment is closed and will not be reopened with new variants on this same data.
 
-Disclosure: vedi PROTOCOL_MAROY.md (OOS non vergine, feed IEX, campione corto).
+Disclosure: see PROTOCOL_MAROY.md (OOS not virgin, IEX feed, short sample).

@@ -1,12 +1,21 @@
-"""Genera i grafici del README (SVG, tema chiaro e scuro) dai dati del repo.
+"""Generate the README charts (SVG + PNG, light and dark themes) from repo data.
 
-Uso:  python scripts/make_charts.py
-Richiede i parquet in data/ (equity SPY gia' salvate, ES ricalcolato al volo).
-Palette: reference palette del metodo dataviz (validata CVD in entrambi i modi).
+Usage:
+    python scripts/make_charts.py                     # writes into assets/
+    python scripts/make_charts.py --assets-dir /tmp/x  # preview elsewhere
+
+Inputs (see README "Data"): data/spy_1min.parquet is required;
+data/es_1min.parquet is optional (without it the ES-vs-SPY chart is skipped).
+The SPY equity curves and the walk-forward variant returns are recomputed
+here from the same functions the reports use, so a fresh clone needs no
+intermediate files.
+
+Palette: the dataviz reference palette (CVD-validated in both modes).
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 
@@ -23,10 +32,12 @@ from src.backtest import CostModel, run_backtest  # noqa: E402
 from src.noise_area import filter_rth, session_closes  # noqa: E402
 from src.run_walkforward import (  # noqa: E402
     CONTROL, WF_START, _paper_distance, quarterly_marks, trailing_sharpe,
+    variant_returns,
 )
 
 ET = "America/New_York"
-ASSETS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ASSETS = os.path.join(ROOT, "assets")
 
 THEMES = {
     "light": dict(bg="#ffffff", ink="#0b0b0b", sub="#52514e", grid="#e6e5e0",
@@ -52,10 +63,11 @@ def style(ax, t, ylog=False):
         ax.set_yscale("log")
 
 
-def save(fig, name, t):
-    """Salva SVG (web, nitido) e PNG (app mobile GitHub: non rende gli SVG)."""
+def save(fig, name, t, assets_dir):
+    """Save SVG (crisp on the web) and PNG (the GitHub mobile app does not
+    render SVG)."""
     fig.patch.set_facecolor(t["bg"])
-    base = os.path.join(ASSETS, name.removesuffix(".svg"))
+    base = os.path.join(assets_dir, name.removesuffix(".svg"))
     fig.savefig(base + ".svg", format="svg", bbox_inches="tight",
                 facecolor=t["bg"])
     fig.savefig(base + ".png", format="png", dpi=160, bbox_inches="tight",
@@ -67,38 +79,48 @@ def growth(returns: pd.Series) -> pd.Series:
     return (1 + returns.fillna(0)).cumprod()
 
 
-def load_data():
+def load_data(spy_path, es_path, wf_cache):
+    """Recompute everything the charts need from the 1-minute bars.
+
+    The SPY equity curves use exactly the parameters of the replication
+    (default costs, 100k initial equity) reported in reports/validation.md.
+    """
+    if not os.path.exists(spy_path):
+        sys.exit(f"{spy_path} is missing — run src.download_alpaca first "
+                 "(see README, Quickstart).")
     d = {}
-    d["eq_final"] = pd.read_parquet("data/equity_final.parquet")["equity"]
-    d["eq_base"] = pd.read_parquet("data/equity_base.parquet")["equity"]
-    spy = filter_rth(pd.read_parquet("data/spy_1min.parquet"))
+    spy = filter_rth(pd.read_parquet(spy_path))
     d["spy_close"] = session_closes(spy)
-    d["wf_rets"] = pd.read_parquet("data/wf_variant_returns.parquet")
-    d["spy_bars"] = spy
+    for mode in ("final", "base"):
+        d[f"eq_{mode}"] = run_backtest(
+            spy, exit_mode=mode, costs=CostModel()
+        ).equity
+    d["wf_rets"] = variant_returns(spy, wf_cache)
+    d["es_path"] = es_path
     return d
 
 
 # ---------------------------------------------------------------- fig 1
-def fig_equity(d, mode, t):
+def fig_equity(d, mode, t, assets_dir):
     f = d["eq_final"] / d["eq_final"].iloc[0]
     b = d["eq_base"] / d["eq_base"].iloc[0]
     bh = d["spy_close"] / d["spy_close"].iloc[0]
 
     fig, ax = plt.subplots(figsize=(9.2, 4.4))
     style(ax, t, ylog=True)
-    ax.plot(f.index, f, color=t["blue"], lw=2, label="Strategia — exit final (paper)")
-    ax.plot(b.index, b, color=t["green"], lw=2, label="Strategia — exit base")
+    ax.plot(f.index, f, color=t["blue"], lw=2, label="Strategy — final exit (paper)")
+    ax.plot(b.index, b, color=t["green"], lw=2, label="Strategy — base exit")
     ax.plot(bh.index, bh, color=t["gray"], lw=1.6, ls=(0, (4, 2)), label="SPY buy & hold")
     ax.set_yticks([1, 1.5, 2, 2.5, 3], labels=["1.0x", "1.5x", "2.0x", "2.5x", "3.0x"])
     ax.yaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
     ax.legend(frameon=False, labelcolor=t["ink"], fontsize=9, loc="upper left")
-    ax.set_title("Crescita di $1 — SPY, lug 2020 → lug 2026 (netto costi, scala log)",
+    ax.set_title("Growth of $1 — SPY, Jul 2020 → Jul 2026 (net of costs, log scale)",
                  color=t["ink"], fontsize=11, loc="left", pad=12)
-    save(fig, f"equity_spy_{mode}.svg", t)
+    save(fig, f"equity_spy_{mode}.svg", t, assets_dir)
 
 
 # ---------------------------------------------------------------- fig 2
-def fig_yearly(d, mode, t):
+def fig_yearly(d, mode, t, assets_dir):
     strat = d["eq_final"].pct_change()
     bh = d["spy_close"].pct_change()
     ys = strat.groupby(strat.index.year).apply(lambda r: (1 + r).prod() - 1)
@@ -109,24 +131,27 @@ def fig_yearly(d, mode, t):
     w = 0.38
     fig, ax = plt.subplots(figsize=(9.2, 4.0))
     style(ax, t)
-    ax.bar(x - w / 2, ys.to_numpy(), w, color=t["blue"], label="Strategia (final)")
+    ax.bar(x - w / 2, ys.to_numpy(), w, color=t["blue"], label="Strategy (final)")
     ax.bar(x + w / 2, yb.to_numpy(), w, color=t["gray"], label="SPY buy & hold")
     ax.axhline(0, color=t["sub"], lw=0.8)
     ax.set_xticks(x, labels=[str(y) for y in years])
     ax.yaxis.set_major_formatter(lambda v, _: f"{v:+.0%}")
     ax.legend(frameon=False, labelcolor=t["ink"], fontsize=9, loc="upper right")
-    ax.set_title("Rendimento per anno — l'edge c'era (2020-24) e si è compresso (2025-26)",
+    ax.set_title("Return per year — the edge was there (2020-24) and compressed (2025-26)",
                  color=t["ink"], fontsize=11, loc="left", pad=12)
     ax.set_ylim(top=0.40)
-    ax.annotate("2022: SPY -19.5%\nstrategia +25.8%", xy=(2, 0.262),
+    ax.annotate("2022: SPY -19.5%\nstrategy +25.8%", xy=(2, 0.262),
                 xytext=(1.55, 0.335), color=t["sub"], fontsize=8.5)
-    save(fig, f"yearly_{mode}.svg", t)
+    save(fig, f"yearly_{mode}.svg", t, assets_dir)
 
 
 # ---------------------------------------------------------------- fig 3
-def fig_es_vs_spy(d, mode, t, cache={}):
+def fig_es_vs_spy(d, mode, t, assets_dir, cache={}):
     if "es" not in cache:
-        es = filter_rth(pd.read_parquet("data/es_1min.parquet"))
+        if not os.path.exists(d["es_path"]):
+            print(f"  skipping es_vs_spy: {d['es_path']} not available")
+            return
+        es = filter_rth(pd.read_parquet(d["es_path"]))
         res = run_backtest(es, exit_mode="final", costs=CostModel.es_futures(0.25),
                            unit_multiplier=50.0, initial_equity=1_000_000.0)
         cache["es"] = res.equity
@@ -146,13 +171,14 @@ def fig_es_vs_spy(d, mode, t, cache={}):
             fontsize=9, va="center")
     ax.yaxis.set_major_formatter(lambda v, _: f"{v:.2f}x")
     ax.set_xlim(es_g.index[0], es_g.index[-1] + pd.Timedelta(days=120))
-    ax.set_title("Stessa strategia, due fonti dati indipendenti — correlazione 0.97: "
-                 "il calo recente è reale", color=t["ink"], fontsize=11, loc="left", pad=12)
-    save(fig, f"es_vs_spy_{mode}.svg", t)
+    ax.set_title("Same strategy, two independent data sources — correlation 0.97: "
+                 "the recent decline is real", color=t["ink"], fontsize=11,
+                 loc="left", pad=12)
+    save(fig, f"es_vs_spy_{mode}.svg", t, assets_dir)
 
 
 # ---------------------------------------------------------------- fig 4
-def fig_maroy(d, mode, t):
+def fig_maroy(d, mode, t, assets_dir):
     rets = d["wf_rets"]
     is_rets = rets[rets.index < pd.Timestamp("2024-01-01", tz=ET)]
     sharpe = (is_rets.mean() / is_rets.std() * np.sqrt(252)).round(2)
@@ -170,11 +196,11 @@ def fig_maroy(d, mode, t):
         im = ax.imshow(m, cmap=cmap, vmin=vmin, vmax=vmax, aspect="auto")
         ax.set_facecolor(t["bg"])
         ax.set_xticks(range(3), labels=[f"{iv}m" for iv in ivs])
-        ax.set_yticks(range(3), labels=[f"{lb}g" for lb in lbs])
+        ax.set_yticks(range(3), labels=[f"{lb}d" for lb in lbs])
         ax.tick_params(colors=t["sub"], labelsize=9, length=0)
         for s in ax.spines.values():
             s.set_visible(False)
-        ax.set_title(f"exit {ex}", color=t["ink"], fontsize=10)
+        ax.set_title(f"{ex} exit", color=t["ink"], fontsize=10)
         for i in range(3):
             for j in range(3):
                 dark_cell = (m[i, j] - vmin) / (vmax - vmin) > 0.55
@@ -184,14 +210,14 @@ def fig_maroy(d, mode, t):
             ax.add_patch(plt.Rectangle((0.5, 0.5), 1, 1, fill=False,
                                        edgecolor=t["orange"], lw=2.2))
     axes[0].set_ylabel("lookback", color=t["sub"], fontsize=9)
-    fig.suptitle("Griglia Maróy: Sharpe in-sample delle 27 varianti — vince la config del paper (riquadro)",
+    fig.suptitle("Maróy grid: in-sample Sharpe of the 27 variants — the paper's config wins (boxed)",
                  color=t["ink"], fontsize=11, x=0.02, ha="left")
     fig.subplots_adjust(top=0.78)
-    save(fig, f"maroy_grid_{mode}.svg", t)
+    save(fig, f"maroy_grid_{mode}.svg", t, assets_dir)
 
 
 # ---------------------------------------------------------------- fig 5
-def fig_walkforward(d, mode, t):
+def fig_walkforward(d, mode, t, assets_dir):
     rets = d["wf_rets"]
     marks = quarterly_marks(rets.index)
     picks = []
@@ -212,29 +238,39 @@ def fig_walkforward(d, mode, t):
     fig, ax = plt.subplots(figsize=(9.2, 4.0))
     style(ax, t)
     g_ctrl, g_wf = growth(ctrl), growth(wf)
-    ax.plot(g_ctrl.index, g_ctrl, color=t["blue"], lw=2, label="Config paper, fissa (Sharpe 0.92)")
-    ax.plot(g_wf.index, g_wf, color=t["orange"], lw=2, label="Walk-forward trimestrale (Sharpe 0.57)")
+    ax.plot(g_ctrl.index, g_ctrl, color=t["blue"], lw=2,
+            label="Paper config, fixed (Sharpe 0.92)")
+    ax.plot(g_wf.index, g_wf, color=t["orange"], lw=2,
+            label="Quarterly walk-forward (Sharpe 0.57)")
     for mk, _ in picks[1:]:
         ax.axvline(mk, color=t["grid"], lw=0.6)
     ax.yaxis.set_major_formatter(lambda v, _: f"{v:.1f}x")
     ax.legend(frameon=False, labelcolor=t["ink"], fontsize=9, loc="upper left")
-    ax.set_title("Riselezione trimestrale vs parametri fissi — l'adattività distrugge valore",
+    ax.set_title("Quarterly reselection vs fixed parameters — adaptivity destroys value",
                  color=t["ink"], fontsize=11, loc="left", pad=12)
-    save(fig, f"walkforward_{mode}.svg", t)
+    save(fig, f"walkforward_{mode}.svg", t, assets_dir)
 
 
 def main():
-    os.makedirs(ASSETS, exist_ok=True)
-    d = load_data()
+    p = argparse.ArgumentParser()
+    p.add_argument("--assets-dir", default=ASSETS)
+    p.add_argument("--spy", default=os.path.join(ROOT, "data/spy_1min.parquet"))
+    p.add_argument("--es", default=os.path.join(ROOT, "data/es_1min.parquet"))
+    p.add_argument("--wf-cache",
+                   default=os.path.join(ROOT, "data/wf_variant_returns.parquet"))
+    args = p.parse_args()
+
+    os.makedirs(args.assets_dir, exist_ok=True)
+    d = load_data(args.spy, args.es, args.wf_cache)
     for mode, t in THEMES.items():
         plt.rcParams.update({"font.size": 10, "text.color": t["ink"],
                              "axes.labelcolor": t["sub"]})
-        fig_equity(d, mode, t)
-        fig_yearly(d, mode, t)
-        fig_es_vs_spy(d, mode, t)
-        fig_maroy(d, mode, t)
-        fig_walkforward(d, mode, t)
-        print(f"tema {mode}: 5 SVG generati")
+        fig_equity(d, mode, t, args.assets_dir)
+        fig_yearly(d, mode, t, args.assets_dir)
+        fig_es_vs_spy(d, mode, t, args.assets_dir)
+        fig_maroy(d, mode, t, args.assets_dir)
+        fig_walkforward(d, mode, t, args.assets_dir)
+        print(f"theme {mode}: charts written to {args.assets_dir}")
 
 
 if __name__ == "__main__":

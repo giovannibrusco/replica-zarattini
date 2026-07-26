@@ -1,22 +1,22 @@
-"""Engine di backtest event-driven per la strategia Noise Area.
+"""Event-driven backtest engine for the Noise Area strategy.
 
-Regole (spec):
-- Check di entry/exit SOLO ai timestamp di 30 minuti: 10:00, 10:30, ..., 15:30.
-  Il prezzo usato e' il close della barra a 1 minuto etichettata al check time.
-- Entry: prezzo > Upper_t -> LONG; prezzo < Lower_t -> SHORT. Flip consentito.
-- Exit variante "base":   long esce se prezzo < Lower_t (banda opposta);
-                          short esce se prezzo > Upper_t.
-- Exit variante "final":  long esce se prezzo < max(VWAP_t, Upper_t);
-                          short esce se prezzo > min(VWAP_t, Lower_t)
-  (rientro nella Noise Area oppure attraversamento del VWAP di giornata).
-- Chiusura forzata di tutto sull'ultima barra RTH (15:59, prezzo di close
-  della sessione): zero overnight.
-- Sizing: vol targeting 2% con cap di leva 4x, calcolato all'entry con
-  l'equity corrente (compounding).
+Rules (spec):
+- Entry/exit checks ONLY on the 30-minute timestamps: 10:00, 10:30, ..., 15:30.
+  The price used is the close of the 1-minute bar labelled at the check time.
+- Entry: price > Upper_t -> LONG; price < Lower_t -> SHORT. Flips allowed.
+- Exit variant "base":   a long exits if price < Lower_t (opposite band);
+                         a short exits if price > Upper_t.
+- Exit variant "final":  a long exits if price < max(VWAP_t, Upper_t);
+                         a short exits if price > min(VWAP_t, Lower_t)
+  (re-entry into the Noise Area, or a cross of the session VWAP).
+- Everything is force-closed on the last RTH bar (15:59, session close
+  price): zero overnight exposure.
+- Sizing: 2% vol targeting with a 4x leverage cap, computed at entry on
+  current equity (compounding).
 
-Costi (parametrici, vedi CostModel): per azioni commissione per share +
-slippage in dollari per share; per futures commissione+fee per contratto +
-slippage in tick. Applicati per transazione (entry e exit separatamente).
+Costs (parametric, see CostModel): for shares, commission per share plus
+slippage in dollars per share; for futures, commission+fees per contract
+plus slippage in ticks. Charged per transaction (entry and exit separately).
 """
 
 from __future__ import annotations
@@ -37,10 +37,10 @@ from .sizing import (
 )
 
 def check_times(interval_min: int = 30) -> list[time]:
-    """Griglia dei check: da 10:00 ogni `interval_min` minuti, ultimo <= 15:45.
+    """Check grid: from 10:00 every `interval_min` minutes, last one <= 15:45.
 
-    30 minuti (10:00 ... 15:30) e' il valore del paper, CONGELATO per la
-    replica; altri intervalli sono ammessi SOLO nel protocollo Maroy.
+    30 minutes (10:00 ... 15:30) is the paper's value, FROZEN for the
+    replication; other intervals are allowed ONLY in the Maroy protocol.
     """
     out, minutes = [], 10 * 60
     while minutes <= 15 * 60 + 45:
@@ -49,19 +49,19 @@ def check_times(interval_min: int = 30) -> list[time]:
     return out
 
 
-# griglia del paper: 10:00, 10:30, ..., 15:30
+# the paper's grid: 10:00, 10:30, ..., 15:30
 CHECK_TIMES = check_times(30)
 FORCED_EXIT_TIME = time(15, 59)
 
 
 @dataclass
 class CostModel:
-    """Costi per transazione (una gamba; un round trip = due transazioni)."""
+    """Costs per transaction (one leg; a round trip = two transactions)."""
 
-    commission_per_unit: float = 0.0035  # $/share (IB, come nel paper) o $/contratto
+    commission_per_unit: float = 0.0035  # $/share (IB, as in the paper) or $/contract
     fees_per_unit: float = 0.0           # exchange+regulatory (futures)
-    slippage_per_unit: float = 0.0       # $ per unita' per transazione
-    min_commission: float = 0.35         # minimo per ordine (IB stocks)
+    slippage_per_unit: float = 0.0       # $ per unit per transaction
+    min_commission: float = 0.35         # per-order minimum (IB stocks)
 
     def commission(self, units: int) -> float:
         return max(self.commission_per_unit * units, self.min_commission) + (
@@ -70,8 +70,8 @@ class CostModel:
 
     @staticmethod
     def es_futures(slippage_ticks: float = 0.25, micro: bool = False) -> "CostModel":
-        """Costi spec per ES/MES: commissione+fees per contratto, slippage in tick."""
-        tick_value = 1.25 if micro else 12.50  # 0.25 punti indice
+        """Spec costs for ES/MES: commission+fees per contract, slippage in ticks."""
+        tick_value = 1.25 if micro else 12.50  # 0.25 index points
         return CostModel(
             commission_per_unit=0.25 if micro else 0.85,
             fees_per_unit=0.35 if micro else 1.40,
@@ -83,7 +83,7 @@ class CostModel:
 @dataclass
 class BacktestResult:
     trades: pd.DataFrame
-    equity: pd.Series          # equity a fine giornata (sempre flat overnight)
+    equity: pd.Series          # end-of-day equity (always flat overnight)
     daily_returns: pd.Series = field(init=False)
 
     def __post_init__(self) -> None:
@@ -95,20 +95,20 @@ def run_backtest(
     initial_equity: float = 100_000.0,
     exit_mode: str = "final",
     costs: CostModel | None = None,
-    unit_multiplier: float = 1.0,  # 1 per azioni; 50 per ES, 5 per MES
+    unit_multiplier: float = 1.0,  # 1 for shares; 50 for ES, 5 for MES
     lookback: int = 14,
     vol_target: float = VOL_TARGET,
     max_leverage: float = MAX_LEVERAGE,
     vol_lookback: int = VOL_LOOKBACK,
     check_interval_min: int = 30,
 ) -> BacktestResult:
-    """Esegue il backtest su barre 1-minuto RTH (vedi noise_area per il formato).
+    """Run the backtest on 1-minute RTH bars (see noise_area for the format).
 
-    exit_mode: "base" (banda opposta), "final" (max/min di VWAP e banda di
-    entry, variante del paper) o "vwap" (solo VWAP, variante Maroy).
+    exit_mode: "base" (opposite band), "final" (max/min of VWAP and the entry
+    band, the paper's variant) or "vwap" (VWAP only, Maroy variant).
     """
     if exit_mode not in ("base", "final", "vwap"):
-        raise ValueError("exit_mode deve essere 'base', 'final' o 'vwap'")
+        raise ValueError("exit_mode must be 'base', 'final' or 'vwap'")
     if costs is None:
         costs = CostModel()
 
@@ -120,7 +120,7 @@ def run_backtest(
     trades: list[dict] = []
     equity_by_day: dict[pd.Timestamp, float] = {}
 
-    # posizione corrente
+    # current position
     side = 0  # +1 long, -1 short, 0 flat
     units = 0
     entry_px = 0.0
@@ -166,7 +166,7 @@ def run_backtest(
         trades_open_cost[0] = comm
         side, units, entry_px, entry_time = new_side, n, exec_px, ts
 
-    trades_open_cost = [0.0]  # costo di apertura del trade corrente
+    trades_open_cost = [0.0]  # opening cost of the current trade
 
     grid = check_times(check_interval_min)
 
@@ -175,8 +175,8 @@ def run_backtest(
         times = day_bars.index.time
 
         for t in grid:
-            # ultima barra disponibile <= check time: se il minuto esatto
-            # manca (feed rado) si usa l'ultimo prezzo battuto
+            # last bar available <= check time: if the exact minute is
+            # missing (sparse feed) the last traded price is used
             pos = np.searchsorted(times, t, side="right") - 1
             if pos < 0:
                 continue
@@ -185,7 +185,7 @@ def run_backtest(
                 row["close"], row["upper"], row["lower"], row["vwap"]
             )
             if not np.isfinite(upper) or not np.isfinite(lower):
-                continue  # warmup o dati insufficienti: non si opera
+                continue  # warmup or insufficient data: do not trade
             ts = pd.Timestamp.combine(day.date(), t).tz_localize(day_bars.index.tz)
 
             long_sig = px > upper
@@ -219,7 +219,7 @@ def run_backtest(
                 if (long_sig or short_sig) and np.isfinite(sd):
                     _open_position(1 if long_sig else -1, px, ts, sd)
 
-        # chiusura forzata a fine sessione (zero overnight)
+        # forced close at the end of the session (zero overnight)
         if side != 0:
             last = day_bars.iloc[-1]
             ts = day_bars.index[-1]

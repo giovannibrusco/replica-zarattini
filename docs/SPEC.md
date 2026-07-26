@@ -1,126 +1,172 @@
-# SPEC — Replica "Beat the Market" (Zarattini, Aziz, Barbon 2024) su ES/MES
+# SPEC — "Beat the Market" replication (Zarattini, Aziz, Barbon 2024) on ES/MES
 
-## Contesto e obiettivo
+## Context and objective
 
-Stiamo costruendo una strategia di trading algoritmico partendo dalla replica di un paper pubblicato, per avere un benchmark esterno contro cui validare il codice. Il paper scelto è:
+We are building an algorithmic trading strategy starting from the replication
+of a published paper, in order to have an external benchmark against which to
+validate the code. The chosen paper is:
 
-> Zarattini, C., Aziz, A., Barbon, A. (2024). *Beat the Market: An Effective Intraday Momentum Strategy for S&P500 ETF (SPY)*. SSRN 4824172, Swiss Finance Institute.
+> Zarattini, C., Aziz, A., Barbon, A. (2024). *Beat the Market: An Effective
+> Intraday Momentum Strategy for S&P500 ETF (SPY)*. SSRN 4824172, Swiss
+> Finance Institute.
 
-Risultati dichiarati dal paper (su SPY, mag 2007 – inizio 2024, netto di commissioni IB $0.0035/share): **total return 1.985%, rendimento annualizzato 19,6%, Sharpe 1,33, alfa annualizzato ~19,6% statisticamente significativo vs SPY**.
+Results reported by the paper (on SPY, May 2007 – early 2024, net of IB
+commissions of $0.0035/share): **total return 1,985%, annualised return
+19.6%, Sharpe 1.33, annualised alpha ~19.6%, statistically significant vs
+SPY**.
 
-Noi replichiamo su **futures ES o MES** (dati Interactive Brokers, barre 1 minuto). Esiste una replica pubblica su ES (Quantitativo, gen 2025) che trova: ~+2bps/trade, win rate ~36%, payoff ratio ~2,09 — utile come secondo benchmark.
+We replicate on **ES or MES futures** (Interactive Brokers data, 1-minute
+bars). A public replication on ES exists (Quantitativo, Jan 2025) which finds:
+~+2bps/trade, win rate ~36%, payoff ratio ~2.09 — useful as a second
+benchmark.
 
-Obiettivo finale (fase successiva, NON in questo blocco): valutare la strategia sotto i vincoli Apex Trader Funding (trailing drawdown, consistency rule) via Monte Carlo.
+Final objective (later phase, NOT in this block): evaluate the strategy under
+Apex Trader Funding constraints (trailing drawdown, consistency rule) via
+Monte Carlo.
 
-## Logica della strategia
+## Strategy logic
 
-Momentum intraday condizionato: si definisce una "Noise Area" attorno all'open basata sul movimento tipico degli ultimi 14 giorni a ogni orario della sessione. Prezzo dentro le bande = rumore, nessun trade. Breakout delle bande = squilibrio domanda/offerta anomalo → trend-following nella direzione della rottura, con trailing stop dinamici.
+Conditional intraday momentum: a "Noise Area" is defined around the open,
+based on the typical movement of the last 14 days at each time of the
+session. Price inside the bands = noise, no trade. A breakout of the bands =
+an anomalous supply/demand imbalance → trend-following in the direction of
+the break, with dynamic trailing stops.
 
-## Regole esatte
+## Exact rules
 
 ### 1. Noise Area
-Per ogni minuto-della-sessione t (RTH 09:30–16:00 ET):
+For each minute-of-session t (RTH 09:30–16:00 ET):
 
 ```
-sigma_t = media su d ∈ ultimi 14 giorni di trading di |P_{d,t} / O_d − 1|
+sigma_t = mean over d ∈ last 14 trading days of |P_{d,t} / O_d − 1|
 ```
 
-dove `P_{d,t}` = prezzo al minuto t del giorno d, `O_d` = open RTH del giorno d.
+where `P_{d,t}` = price at minute t of day d, `O_d` = RTH open of day d.
 
-Bande del giorno corrente D (gestione gap tramite ancoraggio a open E close precedente):
+Bands for the current day D (gap handling via anchoring to both the open AND
+the previous close):
 
 ```
 UpperBound_t = max(O_D, C_{D−1}) × (1 + sigma_t)
 LowerBound_t = min(O_D, C_{D−1}) × (1 − sigma_t)
 ```
 
-⚠️ L'ancoraggio a max/min(Open, Close precedente) è essenziale: in presenza di gap overnight l'area si allarga. Molte repliche sbagliano questo dettaglio.
+⚠️ Anchoring to max/min(Open, previous Close) is essential: in the presence of
+an overnight gap the area widens. Many replications get this detail wrong.
 
-### 2. Entry (solo a intervalli di 30 minuti)
-Check ai timestamp HH:00 e HH:30 (10:00, 10:30, …, 15:30):
-- Prezzo > UpperBound_t → **LONG**
-- Prezzo < LowerBound_t → **SHORT**
-- Flip consentito (da long a short e viceversa se il segnale opposto scatta)
-- Nessun nuovo entry che non possa essere chiuso entro le 16:00
+### 2. Entry (only at 30-minute intervals)
+Checks at the HH:00 and HH:30 timestamps (10:00, 10:30, …, 15:30):
+- Price > UpperBound_t → **LONG**
+- Price < LowerBound_t → **SHORT**
+- Flips allowed (long to short and vice versa if the opposite signal fires)
+- No new entry that could not be closed by 16:00
 
-### 3. Exit — due varianti da implementare entrambe
-- **Base**: trailing stop = banda opposta (per un long: esci se prezzo < LowerBound_t)
-- **Finale (quella del paper con i risultati migliori)**: per un long, esci se prezzo scende sotto max(VWAP_t, UpperBound_t) — cioè se rientra nella Noise Area o attraversa il VWAP di giornata. Speculare per gli short.
-- VWAP = VWAP di sessione RTH, calcolato da 09:30
-- Check exit agli stessi intervalli di 30 minuti
-- **Chiusura forzata di tutte le posizioni alle 16:00 ET** (zero overnight)
+### 3. Exit — two variants, both to be implemented
+- **Base**: trailing stop = the opposite band (for a long: exit if price < LowerBound_t)
+- **Final (the paper's variant, with the best results)**: for a long, exit if
+  the price falls below max(VWAP_t, UpperBound_t) — i.e. if it re-enters the
+  Noise Area or crosses the session VWAP. Mirror image for shorts.
+- VWAP = RTH session VWAP, computed from 09:30
+- Exit checks at the same 30-minute intervals
+- **Forced close of all positions at 16:00 ET** (zero overnight)
 
 ### 4. Sizing
-Volatility targeting al 2% giornaliero:
+Volatility targeting at 2% daily:
 
 ```
-contratti = floor( (Equity × 0.02 / sigma_daily_14d) / notional_per_contratto )
+contracts = floor( (Equity × 0.02 / sigma_daily_14d) / notional_per_contract )
 ```
 
-con `sigma_daily_14d` = vol giornaliera realizzata a 14 giorni, e **cap di leva a 4×** (come nel paper e nella replica Quantitativo).
+with `sigma_daily_14d` = 14-day realised daily vol, and a **leverage cap of
+4×** (as in the paper and in the Quantitativo replication).
 
-### 5. Costi (futures, per transazione — moltiplicare ×2 per round trip)
-- Commissione: $0.85/contratto (ES; scalare per MES)
-- Exchange + regulatory fees: $1.40/contratto
-- Slippage: 0.25 tick per transazione (0.5 tick per round trip)
-- Sensitivity analysis obbligatoria: rieseguire con slippage 0.5 e 1 tick per transazione
+### 5. Costs (futures, per transaction — multiply ×2 for a round trip)
+- Commission: $0.85/contract (ES; scale for MES)
+- Exchange + regulatory fees: $1.40/contract
+- Slippage: 0.25 tick per transaction (0.5 tick per round trip)
+- Mandatory sensitivity analysis: re-run with slippage of 0.5 and 1 tick per
+  transaction
 
-## Parametri CONGELATI — vietato ottimizzare
+## FROZEN parameters — optimising is forbidden
 
-| Parametro | Valore | Fonte |
+| Parameter | Value | Source |
 |---|---|---|
-| Lookback Noise Area | 14 giorni | paper |
-| Intervallo esecuzione | 30 minuti | paper |
-| Vol target giornaliera | 2% | paper |
-| Cap leva | 4× | paper |
-| Lookback vol per sizing | 14 giorni | paper |
+| Noise Area lookback | 14 days | paper |
+| Execution interval | 30 minutes | paper |
+| Daily vol target | 2% | paper |
+| Leverage cap | 4× | paper |
+| Vol lookback for sizing | 14 days | paper |
 
-Motivo: il follow-up di Maróy (2025) mostra Sharpe >3 ottimizzando questi parametri in-sample — classico data mining bias. Qualsiasi variante (es. exit alternative su VWAP puro o ladder) va definita ex-ante e testata SOLO out-of-sample con parametri congelati. Nessuna selezione a posteriori del vincitore in-sample.
+Reason: Maróy's (2025) follow-up shows Sharpe >3 by optimising these
+parameters in-sample — classic data mining bias. Any variant (e.g. alternative
+exits on pure VWAP or a ladder) must be defined ex-ante and tested ONLY
+out-of-sample with frozen parameters. No a-posteriori selection of the
+in-sample winner.
 
-## Dati
+## Data
 
-- Fonte: Interactive Brokers via API (ib_insync o ib_async)
-- Strumento: ES (o MES), barre 1 minuto, RTH per il segnale
-- Serve il contratto continuo: stitching sui roll (roll al volume crossover o N giorni prima di scadenza — documentare la regola scelta), back-adjustment additivo
-- Scaricare il massimo storico disponibile; salvare in parquet locale prima di qualsiasi backtest
-- Attenzione ai limiti di pacing IB sulle richieste storiche (batch con pause)
+- Source: Interactive Brokers via API (ib_insync or ib_async)
+- Instrument: ES (or MES), 1-minute bars, RTH for the signal
+- A continuous contract is needed: stitching across rolls (roll at the volume
+  crossover or N days before expiry — document the chosen rule), additive
+  back-adjustment
+- Download the maximum history available; save to a local parquet before any
+  backtest
+- Mind IB's pacing limits on historical requests (batch with pauses)
 
-## Piano di validazione
+## Validation plan
 
-1. **Sanity check dati**: continuità del contratto continuo, nessun buco nei minuti RTH, volumi plausibili
-2. **Replica base vs finale**: confrontare le due varianti di exit; la finale deve dominare la base come nel paper (Tabelle 1–2)
-3. **Benchmark esterni**: ordine di grandezza coerente con paper (Sharpe ~1,3 su SPY) e replica Quantitativo su ES (+2bps/trade, WR ~36%, payoff ~2,1)
-4. **Robustezza temporale**: risultati per anno; test escludendo il 2008 (anno anomalo che gonfia i risultati se incluso); performance per regime VIX (il paper trova Sharpe crescente con la vol, ~3,5 con VIX>40)
-5. **Sensitivity sui costi**: slippage 0.25 / 0.5 / 1 tick
-6. **Statistiche trade-level**: win rate, payoff ratio, expectancy, distribuzione perdite singole, losing streak massima (serve per la fase Apex)
+1. **Data sanity check**: continuity of the continuous contract, no holes in
+   the RTH minutes, plausible volumes
+2. **Base vs final replication**: compare the two exit variants; final must
+   dominate base as in the paper (Tables 1–2)
+3. **External benchmarks**: order of magnitude consistent with the paper
+   (Sharpe ~1.3 on SPY) and with the Quantitativo replication on ES
+   (+2bps/trade, WR ~36%, payoff ~2.1)
+4. **Temporal robustness**: results per year; a test excluding 2008 (an
+   anomalous year that inflates the results if included); performance per VIX
+   regime (the paper finds Sharpe increasing with vol, ~3.5 with VIX>40)
+5. **Cost sensitivity**: slippage 0.25 / 0.5 / 1 tick
+6. **Trade-level statistics**: win rate, payoff ratio, expectancy,
+   distribution of individual losses, longest losing streak (needed for the
+   Apex phase)
 
-## Struttura progetto proposta
+## Proposed project structure
 
 ```
 zarattini_replica/
-├── data/                    # parquet contratto continuo
+├── data/                    # continuous-contract parquet
 ├── src/
 │   ├── download_ib.py       # download + stitching + storage
-│   ├── noise_area.py        # sigma_t, bande, VWAP
-│   ├── backtest.py          # engine event-driven, entry/exit/flip, costi
-│   ├── sizing.py            # vol targeting + cap leva
-│   └── stats.py             # metriche, tabelle per anno/regime
+│   ├── noise_area.py        # sigma_t, bands, VWAP
+│   ├── backtest.py          # event-driven engine, entry/exit/flip, costs
+│   ├── sizing.py            # vol targeting + leverage cap
+│   └── stats.py             # metrics, per-year/per-regime tables
 ├── notebooks/
-│   └── validation.ipynb     # confronto con benchmark, sensitivity
+│   └── validation.ipynb     # benchmark comparison, sensitivity
 └── README.md
 ```
 
-## Ordine di lavoro
+## Order of work
 
-1. `download_ib.py` — scaricare e validare i dati (blocco a sé, verificare qualità prima di procedere)
-2. `noise_area.py` con test unitari sul calcolo di sigma_t e sulla gestione gap
-3. `backtest.py` variante base → variante finale
-4. `stats.py` + notebook di validazione contro i benchmark
-5. STOP e review dei risultati prima di qualsiasi estensione
+1. `download_ib.py` — download and validate the data (a block of its own,
+   verify quality before proceeding)
+2. `noise_area.py` with unit tests on the sigma_t computation and on gap
+   handling
+3. `backtest.py` base variant → final variant
+4. `stats.py` + a validation notebook against the benchmarks
+5. STOP and review the results before any extension
 
-## Fuori scope (fasi successive, non toccare ora)
+## Out of scope (later phases, do not touch now)
 
-- Calibrazione Apex (trailing drawdown, consistency rule, Monte Carlo pass probability)
-- Exit alternative (Maróy) in protocollo out-of-sample
-- Overnight drift (Boyarchenko/Larsen/Whelan) come strategia #2
-- Portafoglio multi-strategia
+- Apex calibration (trailing drawdown, consistency rule, Monte Carlo pass
+  probability)
+- Alternative exits (Maróy) under an out-of-sample protocol
+- Overnight drift (Boyarchenko/Larsen/Whelan) as strategy #2
+- Multi-strategy portfolio
+
+---
+
+*Faithful English translation of the original Italian specification (the
+project brief, frozen before implementation). The Italian original is
+retrievable from the git history.*

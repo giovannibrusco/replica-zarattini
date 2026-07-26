@@ -1,11 +1,11 @@
-"""Metriche di performance e tabelle di validazione.
+"""Performance metrics and validation tables.
 
-Copre il piano di validazione della spec:
-- metriche aggregate (total return, CAGR, vol, Sharpe, max drawdown)
-- alfa/beta annualizzati vs benchmark (OLS su rendimenti giornalieri)
-- statistiche trade-level: win rate, payoff ratio, expectancy,
-  distribuzione perdite, losing streak massima
-- tabella per anno
+Covers the spec's validation plan:
+- aggregate metrics (total return, CAGR, vol, Sharpe, max drawdown)
+- annualised alpha/beta vs a benchmark (OLS on daily returns)
+- trade-level statistics: win rate, payoff ratio, expectancy,
+  loss distribution, longest losing streak
+- per-year table
 """
 
 from __future__ import annotations
@@ -55,8 +55,8 @@ def performance_summary(
 
 
 def trade_stats(trades: pd.DataFrame, unit_multiplier: float = 1.0) -> dict:
-    """unit_multiplier: 1 per azioni, 50 per ES, 5 per MES (serve per il
-    notional corretto nell'expectancy in bps)."""
+    """unit_multiplier: 1 for shares, 50 for ES, 5 for MES (needed for the
+    correct notional in the bps expectancy)."""
     if trades.empty:
         return {"n_trades": 0}
     pnl = trades["net_pnl"]
@@ -66,11 +66,11 @@ def trade_stats(trades: pd.DataFrame, unit_multiplier: float = 1.0) -> dict:
     avg_loss = losses.mean() if len(losses) else np.nan
     payoff = avg_win / abs(avg_loss) if len(losses) and avg_loss != 0 else np.nan
 
-    # rendimento per trade in bps del notional scambiato (confronto Quantitativo)
+    # per-trade return in bps of the notional traded (Quantitativo comparison)
     notional = trades["units"] * trades["entry_px"] * unit_multiplier
     ret_bps = (pnl / notional * 1e4).mean()
 
-    # losing streak massima
+    # longest losing streak
     is_loss = (pnl <= 0).to_numpy()
     streak = max_streak = 0
     for x in is_loss:
@@ -86,6 +86,8 @@ def trade_stats(trades: pd.DataFrame, unit_multiplier: float = 1.0) -> dict:
         "expectancy": pnl.mean(),
         "expectancy_bps": ret_bps,
         "worst_trade": pnl.min(),
+        # 5th percentile of the (negative) losses, i.e. the 95th percentile
+        # of loss magnitude — the tail loss size
         "loss_p95": losses.quantile(0.05) if len(losses) else np.nan,
         "max_losing_streak": max_streak,
     }
@@ -94,7 +96,7 @@ def trade_stats(trades: pd.DataFrame, unit_multiplier: float = 1.0) -> dict:
 def yearly_table(
     daily_returns: pd.Series, benchmark: pd.Series | None = None
 ) -> pd.DataFrame:
-    """Metriche per anno solare (validazione robustezza temporale)."""
+    """Metrics per calendar year (temporal robustness validation)."""
     rows = {}
     for year, r in daily_returns.groupby(daily_returns.index.year):
         b = benchmark[benchmark.index.year == year] if benchmark is not None else None
@@ -103,7 +105,7 @@ def yearly_table(
 
 
 def regime_table(daily_returns: pd.Series, vix_close: pd.Series) -> pd.DataFrame:
-    """Metriche per regime VIX (livello di chiusura del giorno precedente)."""
+    """Metrics per VIX regime (previous day's closing level)."""
     vix = vix_close.reindex(daily_returns.index).ffill().shift(1)
     bins = [0, 15, 20, 30, 40, np.inf]
     labels = ["<15", "15-20", "20-30", "30-40", ">40"]
@@ -120,28 +122,28 @@ def deflated_sharpe(
 ) -> dict:
     """Deflated Sharpe Ratio (Bailey & Lopez de Prado 2014).
 
-    Probabilita' che lo Sharpe osservato del vincente superi l'expected max
-    Sharpe di N trial sotto l'ipotesi nulla (nessuna skill), con correzione
-    per skew e curtosi dei rendimenti. Tutto in unita' giornaliere.
+    Probability that the winner's observed Sharpe exceeds the expected
+    maximum Sharpe of N trials under the null hypothesis (no skill), with a
+    correction for return skewness and kurtosis. All in daily units.
 
-    trial_sharpes_daily: Sharpe giornalieri (non annualizzati) di TUTTI i
-    trial eseguiti, incluso il vincente.
+    trial_sharpes_daily: daily (non-annualised) Sharpe ratios of ALL trials
+    run, including the winner.
     """
     from scipy.stats import norm
 
     r = daily_returns.dropna()
     t_len = len(r)
-    sr = r.mean() / r.std()  # Sharpe giornaliero osservato
+    sr = r.mean() / r.std()  # observed daily Sharpe
     skew = r.skew()
-    kurt = r.kurt() + 3.0  # da eccesso a curtosi "raw"
+    kurt = r.kurt() + 3.0  # from excess to "raw" kurtosis
 
     trials = np.asarray(trial_sharpes_daily, dtype=float)
     n = len(trials)
     var_sr = trials.var(ddof=1)
 
-    gamma = 0.5772156649015329  # Eulero-Mascheroni
+    gamma = 0.5772156649015329  # Euler-Mascheroni
     e = np.e
-    # expected max SR sotto H0 (SR veri tutti nulli)
+    # expected max SR under H0 (all true SRs equal to zero)
     sr0 = np.sqrt(var_sr) * (
         (1 - gamma) * norm.ppf(1 - 1 / n) + gamma * norm.ppf(1 - 1 / (n * e))
     )
@@ -161,13 +163,13 @@ def format_summary(perf: dict, tstats: dict | None = None) -> str:
     fmt = {
         "total_return": ("Total return", "{:+.1%}"),
         "cagr": ("CAGR", "{:+.2%}"),
-        "ann_vol": ("Vol annualizzata", "{:.2%}"),
+        "ann_vol": ("Ann. vol", "{:.2%}"),
         "sharpe": ("Sharpe", "{:.2f}"),
         "max_drawdown": ("Max drawdown", "{:.1%}"),
-        "alpha_ann": ("Alfa annualizzato", "{:+.2%}"),
-        "alpha_tstat": ("t-stat alfa", "{:.2f}"),
+        "alpha_ann": ("Ann. alpha", "{:+.2%}"),
+        "alpha_tstat": ("Alpha t-stat", "{:.2f}"),
         "beta": ("Beta", "{:.2f}"),
-        "n_days": ("Giorni", "{:d}"),
+        "n_days": ("Days", "{:d}"),
     }
     for key, (label, f) in fmt.items():
         if key in perf and pd.notna(perf[key]):

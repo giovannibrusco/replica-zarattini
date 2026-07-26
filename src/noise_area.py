@@ -1,22 +1,22 @@
-"""Noise Area, sigma_t, bande e VWAP di sessione.
+"""Noise Area: sigma_t, bands and session VWAP.
 
-Replica di Zarattini, Aziz, Barbon (2024) "Beat the Market".
+Replication of Zarattini, Aziz, Barbon (2024) "Beat the Market".
 
-Convenzioni sui dati in ingresso:
-- DataFrame di barre a 1 minuto con indice DatetimeIndex tz-aware (America/New_York)
-- colonne: open, high, low, close, volume
-- solo sessione RTH: barre etichettate da 09:30 a 15:59 inclusa (la barra
-  etichettata HH:MM copre [HH:MM, HH:MM+1))
+Input data conventions:
+- DataFrame of 1-minute bars with a tz-aware DatetimeIndex (America/New_York)
+- columns: open, high, low, close, volume
+- RTH session only: bars labelled 09:30 through 15:59 inclusive (the bar
+  labelled HH:MM covers [HH:MM, HH:MM+1))
 
-Definizioni (spec):
-    sigma_t   = media sugli ultimi `lookback` giorni di |P_{d,t} / O_d - 1|
-                (il giorno corrente e' SEMPRE escluso)
+Definitions (spec):
+    sigma_t   = mean over the last `lookback` days of |P_{d,t} / O_d - 1|
+                (the current day is ALWAYS excluded)
     Upper_t   = max(O_D, C_{D-1}) * (1 + sigma_t)
     Lower_t   = min(O_D, C_{D-1}) * (1 - sigma_t)
-    VWAP_t    = VWAP di sessione da 09:30, prezzo tipico (H+L+C)/3
+    VWAP_t    = session VWAP from 09:30, typical price (H+L+C)/3
 
-L'ancoraggio a max/min(Open, Close precedente) gestisce i gap overnight:
-con un gap la Noise Area si allarga fino a coprire entrambi i riferimenti.
+Anchoring to max/min(Open, previous Close) handles overnight gaps: with a
+gap the Noise Area widens until it covers both reference levels.
 """
 
 from __future__ import annotations
@@ -25,15 +25,15 @@ import numpy as np
 import pandas as pd
 
 RTH_START = "09:30"
-RTH_LAST_BAR = "15:59"  # ultima barra a 1 minuto della sessione RTH
+RTH_LAST_BAR = "15:59"  # last 1-minute bar of the RTH session
 
-DEFAULT_LOOKBACK = 14  # giorni — parametro CONGELATO da spec, non ottimizzare
+DEFAULT_LOOKBACK = 14  # days — parameter FROZEN by spec, do not optimise
 
 
 def filter_rth(df: pd.DataFrame) -> pd.DataFrame:
-    """Mantiene solo le barre RTH (etichette 09:30..15:59)."""
+    """Keep RTH bars only (labels 09:30..15:59)."""
     if df.index.tz is None:
-        raise ValueError("l'indice deve essere tz-aware (America/New_York)")
+        raise ValueError("index must be tz-aware (America/New_York)")
     return df.between_time(RTH_START, RTH_LAST_BAR)
 
 
@@ -42,12 +42,12 @@ def _day_key(index: pd.DatetimeIndex) -> pd.Index:
 
 
 def session_opens(df: pd.DataFrame) -> pd.Series:
-    """Open RTH di ogni giorno (open della prima barra della sessione)."""
+    """RTH open of each day (open of the session's first bar)."""
     return df["open"].groupby(_day_key(df.index)).first()
 
 
 def session_closes(df: pd.DataFrame) -> pd.Series:
-    """Close RTH di ogni giorno (close dell'ultima barra della sessione)."""
+    """RTH close of each day (close of the session's last bar)."""
     return df["close"].groupby(_day_key(df.index)).last()
 
 
@@ -56,13 +56,13 @@ def compute_sigma(
     lookback: int = DEFAULT_LOOKBACK,
     min_obs: int | None = None,
 ) -> pd.Series:
-    """sigma_t per ogni barra: media a `lookback` giorni di |P_{d,t}/O_d - 1|.
+    """sigma_t for each bar: `lookback`-day mean of |P_{d,t}/O_d - 1|.
 
-    Il giorno corrente e' escluso (shift di un giorno). Per gestire mezze
-    sedute (early close) in cui alcuni minuti mancano, la media richiede
-    almeno `min_obs` osservazioni disponibili nella finestra (default:
-    lookback // 2); sotto quella soglia sigma_t e' NaN e il backtest non
-    opera a quel minuto.
+    The current day is excluded (shifted by one day). To handle half
+    sessions (early closes) where some minutes are missing, the mean
+    requires at least `min_obs` observations available in the window
+    (default: lookback // 2); below that threshold sigma_t is NaN and the
+    backtest does not trade at that minute.
     """
     if min_obs is None:
         min_obs = max(1, lookback // 2)
@@ -72,7 +72,7 @@ def compute_sigma(
     opens.index = df.index
     move = (df["close"] / opens - 1.0).abs()
 
-    # matrice giorni x minuto-della-sessione
+    # days x minute-of-session matrix
     frame = pd.DataFrame(
         {"day": days, "tod": df.index.time, "move": move.to_numpy()}
     )
@@ -82,7 +82,7 @@ def compute_sigma(
         pivot.rolling(lookback, min_periods=min_obs).mean().shift(1)
     )
 
-    # riporta in forma lunga allineata alle barre originali
+    # back to long form, aligned with the original bars
     long = sigma_by_day.stack(future_stack=True).rename("sigma")
     keys = pd.MultiIndex.from_arrays([days, df.index.time])
     out = pd.Series(long.reindex(keys).to_numpy(), index=df.index, name="sigma")
@@ -90,7 +90,7 @@ def compute_sigma(
 
 
 def compute_vwap(df: pd.DataFrame) -> pd.Series:
-    """VWAP di sessione da 09:30, con prezzo tipico (H+L+C)/3."""
+    """Session VWAP from 09:30, using typical price (H+L+C)/3."""
     tp = (df["high"] + df["low"] + df["close"]) / 3.0
     days = _day_key(df.index)
     pv = (tp * df["volume"]).groupby(days).cumsum()
@@ -105,9 +105,9 @@ def build_indicators(
     lookback: int = DEFAULT_LOOKBACK,
     min_obs: int | None = None,
 ) -> pd.DataFrame:
-    """DataFrame arricchito con sigma, bande, vwap, open di giornata e close precedente.
+    """DataFrame enriched with sigma, bands, vwap, day open and previous close.
 
-    Le righe dei primi `lookback` giorni hanno sigma/bande NaN (warmup).
+    Rows in the first `lookback` days have NaN sigma/bands (warmup).
     """
     df = filter_rth(df).sort_index()
     days = _day_key(df.index)

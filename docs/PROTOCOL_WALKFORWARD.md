@@ -1,49 +1,55 @@
-# Addendum ex-ante — Walk-forward sulla lista chiusa di varianti
+# Ex-ante addendum — Walk-forward on the closed list of variants
 
-**Congelato il 2026-07-08, PRIMA di eseguire il walk-forward.**
-Estende PROTOCOL_MAROY.md (commit 4d0a7cc). Non aggiunge varianti: cambia
-solo la procedura di selezione, da statica (un solo split) ad adattiva.
+**Frozen on 2026-07-08, BEFORE running the walk-forward.**
+Extends PROTOCOL_MAROY.md (commit 4d0a7cc). It adds no variants: it changes
+only the selection procedure, from static (a single split) to adaptive.
 
-## Rapporto con l'esperimento precedente
+## Relationship with the previous experiment
 
-L'esperimento a split singolo è chiuso (esito: resta la config del paper).
-Il walk-forward risponde a una domanda diversa: *"riselezionare
-periodicamente la variante in base al passato recente avrebbe aggiunto
-valore rispetto a tenere fissa la config del paper?"* La selezione a ogni
-punto usa SOLO dati precedenti a quel punto: nessun look-ahead. Il residuo
-di contaminazione (conosciamo già i risultati full-sample del controllo e
-la griglia IS) è dichiarato: l'esito vale come pilota, come tutto il resto
-su questi dati.
+The single-split experiment is closed (outcome: the paper's config stands).
+The walk-forward answers a different question: *"would periodically
+reselecting the variant on the basis of the recent past have added value
+relative to keeping the paper's config fixed?"* Selection at each point uses
+ONLY data preceding that point: no look-ahead. The residual contamination (we
+already know the control's full-sample results and the IS grid) is declared:
+the outcome counts as a pilot, like everything else on this data.
 
-## Design (UNICO — vietato provarne altri su questi dati)
+## Design (SINGLE — trying others on this data is forbidden)
 
-- **Universo**: le stesse 27 varianti della lista chiusa (3 exit × 3
-  lookback × 3 intervalli), stessi costi, stesso vol targeting
-- **Finestra di selezione**: 252 giorni di trading trailing
-- **Frequenza di riselezione**: trimestrale (1 gen / 1 apr / 1 lug / 1 ott)
-- **Metrica di selezione**: Sharpe annualizzato netto sulla finestra
-  trailing; tie-break = vicinanza alla config del paper (come nel
-  protocollo base); minimo 200 osservazioni valide nella finestra
-- **Primo punto di selezione**: 2021-10-01 (primo trimestre con 252 giorni
-  di storia valutabile dopo il warmup del 2020-10-01)
-- **Meccanica**: la variante selezionata si applica per tutto il trimestre
-  successivo; lo switch avviene overnight (le strategie sono flat a fine
-  giornata, quindi il cambio è implementabile senza costi aggiuntivi)
-- **Ricostruzione**: si concatenano i rendimenti giornalieri netti della
-  variante attiva in ciascun trimestre (equivalente a un conto unico che
-  cambia regole overnight, essendo i rendimenti invarianti di scala)
+- **Universe**: the same 27 variants of the closed list (3 exits × 3
+  lookbacks × 3 intervals), same costs, same vol targeting
+- **Selection window**: 252 trailing trading days
+- **Reselection frequency**: quarterly (1 Jan / 1 Apr / 1 Jul / 1 Oct)
+- **Selection metric**: net annualised Sharpe over the trailing window;
+  tie-break = closeness to the paper's config (as in the base protocol);
+  minimum 200 valid observations in the window
+- **First selection point**: 2021-10-01 (the first quarter with 252 days of
+  evaluable history after the 2020-10-01 warmup)
+- **Mechanics**: the selected variant applies for the whole following
+  quarter; the switch happens overnight (the strategies are flat at the end
+  of the day, so the change is implementable at no additional cost)
+- **Reconstruction**: the net daily returns of the variant active in each
+  quarter are concatenated (equivalent to a single account that changes rules
+  overnight, returns being scale-invariant)
 
-## Criterio di successo (ex-ante)
+## Success criterion (ex-ante)
 
-Periodo di valutazione: 2021-10-01 → fine campione, identico per tutti.
+Evaluation period: 2021-10-01 → end of sample, identical for all.
 
-- **W1**: Sharpe netto del walk-forward > Sharpe netto del controllo
-  (config paper fissa) sullo stesso periodo
+- **W1**: net Sharpe of the walk-forward > net Sharpe of the control
+  (paper's fixed config) over the same period
 
-Esito binario su W1. Si riportano inoltre (descrittivi, non decisionali):
-CAGR, max drawdown, sequenza delle varianti selezionate e numero di switch,
-Sharpe del walk-forward vs controllo anno per anno.
+Binary outcome on W1. The following are also reported (descriptive, not
+decisional): CAGR, max drawdown, the sequence of selected variants and the
+number of switches, walk-forward vs control Sharpe year by year.
 
-Se W1 fallisce: l'adattivita' non aggiunge valore su questi dati e il tema
-si chiude fino alla fase ES. Nessuna variazione di finestra, frequenza o
-metrica verra' provata su questo campione.
+If W1 fails: adaptivity adds no value on this data and the topic closes until
+the ES phase. No variation of window, frequency or metric will be tried on
+this sample.
+
+---
+
+*Faithful English translation of the original Italian document. The frozen
+version is commit `dbf73fb` (2026-07-08), which predates every result
+reported in `reports/walkforward_experiment.md`; the translation itself
+changed no content. The Italian original is retrievable from the git history.*

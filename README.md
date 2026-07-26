@@ -1,100 +1,104 @@
-# 📈 Replica "Beat the Market" — Intraday Momentum su SPY & ES
+# 📈 "Beat the Market" replication — Intraday Momentum on SPY & ES
 
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
 [![Tests](https://img.shields.io/badge/tests-48%20passing-brightgreen.svg)](tests/)
-[![Dati](https://img.shields.io/badge/dati-SPY%206a%20%2B%20ES%202a-informational.svg)](#-dati)
-[![Fase](https://img.shields.io/badge/fase-replica%20completata-success.svg)](docs/CONCLUSIONS.md)
+[![Data](https://img.shields.io/badge/data-SPY%206y%20%2B%20ES%202y-informational.svg)](#-data)
+[![Status](https://img.shields.io/badge/status-replication%20complete-success.svg)](docs/CONCLUSIONS.md)
 
-Replica indipendente e validazione di **Zarattini, Aziz & Barbon (2024)** — *"Beat the Market: An Effective Intraday Momentum Strategy for S&P500 ETF (SPY)"* ([SSRN 4824172](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4824172)) — su **due strumenti e due fonti dati indipendenti**, con protocolli anti-overfitting congelati ex-ante.
+Independent replication and validation of **Zarattini, Aziz & Barbon (2024)** — *"Beat the Market: An Effective Intraday Momentum Strategy for S&P500 ETF (SPY)"* ([SSRN 4824172](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4824172)) — across **two instruments and two independent data sources**, with anti-overfitting protocols frozen ex-ante.
 
-![Crescita di $1: strategia final, base e SPY buy&hold, 2020-2026](assets/equity_spy_light.png)
+> 📌 **Not the same as [`qqq-opening-bias-5min`](https://github.com/giovannibrusco/qqq-opening-bias-5min)**: that repo replicates a *different* paper — Zarattini & Aziz (2023), [SSRN 4416622](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4416622), on **QQQ** opening-range bias with 5-minute bars. This repo replicates the **2024** Zarattini/Aziz/Barbon paper: Noise-Area intraday momentum on **SPY and ES futures**, 1-minute bars.
+>
+> 🇮🇹 Italian version of this README: [`docs/README.it.md`](docs/README.it.md).
+
+![Growth of $1: final and base strategy vs SPY buy&hold, 2020-2026](assets/equity_spy_light.png)
 
 ## 🎯 TL;DR
 
-| | Risultato | Benchmark |
+| | Result | Benchmark |
 |---|---|---|
-| ✅ **Replica riuscita** | Sharpe **1.11**, alfa **+16.7%**/anno (t 2.85), beta ≈ 0 | paper: 1.33, ~19.6% (2007-24) |
-| ✅ **Trade-level in linea** | +2.6 bps/trade, WR 41%, payoff 1.69 | Quantitativo su ES: +2 bps, 36%, 2.1 |
-| ✅ **Cross-validazione** | ES (futures IB) vs SPY (Alpaca): correlazione **0.97** | stessi segnali, due mondi dati |
-| ⚠️ **Edge compresso dal 2025** | Sharpe recente ≈ 0 su *entrambi* gli strumenti | non è il feed, non sono i costi |
-| 🔒 **L'ottimizzazione non salva** | Griglia 27 varianti: vince la config del paper; walk-forward: **distrugge** valore | protocolli ex-ante in [`docs/`](docs/) |
+| ✅ **Replication successful** | Sharpe **1.11**, alpha **+16.7%**/yr (t 2.85), beta ≈ 0 | paper: 1.33, ~19.6% (2007-24) |
+| ✅ **Trade-level in line** | +2.6 bps/trade, WR 41%, payoff 1.69 | Quantitativo on ES: +2 bps, 36%, 2.1 |
+| ✅ **Cross-validation** | ES (IB futures) vs SPY (Alpaca): correlation **0.97** | same signals, two data worlds |
+| ⚠️ **Edge compressed since 2025** | recent Sharpe ≈ 0 on *both* instruments | not the feed, not the costs |
+| 🔒 **Optimisation does not save it** | 27-variant grid: the paper's config wins; walk-forward: **destroys** value | ex-ante protocols in [`docs/`](docs/) |
 
-> **Giudizio sintetico**: strategia reale nel campione, profilo prezioso (beta 0, rende nelle crisi — 2022: **+25.8%** con SPY a -19.5%), ma edge attualmente compresso. Non allocabile oggi, non liquidabile come morta: verdetto completo in [`docs/CONCLUSIONS.md`](docs/CONCLUSIONS.md).
+> **Summary judgement**: a real strategy in-sample, with a valuable profile (beta 0, pays in crises — 2022: **+25.8%** with SPY at -19.5%), but with a currently compressed edge. Not allocable today, not dismissible as dead either: full verdict in [`docs/CONCLUSIONS.md`](docs/CONCLUSIONS.md).
 
-## 📐 La strategia in 30 secondi
+## 📐 The strategy in 30 seconds
 
-Momentum intraday condizionato da una **"Noise Area"**: bande attorno all'open costruite dal movimento tipico degli ultimi 14 giorni *a ogni minuto della sessione*, ancorate a `max/min(Open, Close precedente)` per gestire i gap overnight. Prezzo dentro le bande = rumore, nessun trade. Breakout a un check di 30 minuti → trend-following con trailing stop su VWAP/bande, flat forzato alle 16:00. Vol targeting 2%/giorno, leva max 4×.
+Intraday momentum conditioned on a **"Noise Area"**: bands around the open built from the typical move of the last 14 days *at each minute of the session*, anchored to `max/min(Open, previous Close)` to handle overnight gaps. Price inside the bands = noise, no trade. A breakout at a 30-minute check → trend-following with a trailing stop on VWAP/bands, forced flat at 16:00. Vol targeting 2%/day, max leverage 4×.
 
 ```mermaid
 flowchart LR
-    A[IB Gateway<br/>9 contratti ES] -->|stitching roll<br/>volume crossover| C[(parquet 1-min)]
-    B[Alpaca API<br/>SPY feed IEX] --> C
-    C --> D[noise_area.py<br/>σₜ · bande · VWAP]
-    D --> E[backtest.py<br/>entry/exit/flip · costi]
-    E --> F[stats.py<br/>Sharpe · alfa · DSR]
-    F --> G[reports/<br/>4 report di validazione]
+    A[IB Gateway<br/>9 ES contracts] -->|volume-crossover<br/>roll stitching| C[(1-min parquet)]
+    B[Alpaca API<br/>SPY IEX feed] --> C
+    C --> D[noise_area.py<br/>σₜ · bands · VWAP]
+    D --> E[backtest.py<br/>entry/exit/flip · costs]
+    E --> F[stats.py<br/>Sharpe · alpha · DSR]
+    F --> G[reports/<br/>4 validation reports]
 ```
 
-## 📊 I risultati chiave in quattro grafici
+## 📊 The key results in four charts
 
-### 1 · L'edge c'era, e si è compresso
+### 1 · The edge was there, and it compressed
 
-![Rendimenti per anno: strategia vs SPY buy&hold](assets/yearly_light.png)
+![Return per year: strategy vs SPY buy&hold](assets/yearly_light.png)
 
-2020-2024: Sharpe 1.4–2.0 ogni anno, alfa 23-28%. Poi due anni sotto zero. Il 2022 è la firma del profilo "long volatility": la strategia guadagna proprio quando il mercato crolla.
+2020-2024: Sharpe 1.4–2.0 every year, alpha 23-28%. Then two years below zero. 2022 is the signature of the "long volatility" profile: the strategy makes money precisely when the market breaks down.
 
-### 2 · Il calo recente è reale — non è un artefatto dei dati
+### 2 · The recent decline is real — not a data artefact
 
-![ES vs SPY, stessa strategia, stesso periodo: correlazione 0.97](assets/es_vs_spy_light.png)
+![ES vs SPY, same strategy, same period: correlation 0.97](assets/es_vs_spy_light.png)
 
-Stessa strategia su **ES** (futures CME via IB, VWAP e volumi veri, contratto continuo costruito con roll al volume crossover) e su **SPY** (feed IEX gratuito): rendimenti correlati **0.97**, stesso esito. Esclusi feed, costi (~0.4 bps/round trip) e stitching. → [`reports/validation_es.md`](reports/validation_es.md)
+The same strategy on **ES** (CME futures via IB, real VWAP and volumes, continuous contract built with a volume-crossover roll) and on **SPY** (free IEX feed): returns correlated at **0.97**, same outcome. Feed, costs (~0.4 bps/round trip) and stitching are all ruled out. → [`reports/validation_es.md`](reports/validation_es.md)
 
-### 3 · Non è un problema di parametri
+### 3 · It is not a parameter problem
 
-![Griglia Maróy: Sharpe in-sample delle 27 varianti](assets/maroy_grid_light.png)
+![Maróy grid: in-sample Sharpe of the 27 variants](assets/maroy_grid_light.png)
 
-Il follow-up di Maróy (2025) dichiarava Sharpe >3 ottimizzando i parametri. Rifatto **con disciplina** (protocollo congelato [prima dei risultati](docs/PROTOCOL_MAROY.md), selezione meccanica, Deflated Sharpe Ratio): il vincente in-sample delle 27 varianti è… **la configurazione originale del paper** (final / 14g / 30min, riquadro). Nessuna variante promossa. → [`reports/maroy_experiment.md`](reports/maroy_experiment.md)
+Maróy's (2025) follow-up claimed Sharpe >3 by optimising the parameters. Redone **with discipline** (protocol frozen [before the results](docs/PROTOCOL_MAROY.md), mechanical selection, Deflated Sharpe Ratio): the in-sample winner of the 27 variants is… **the paper's original configuration** (final / 14d / 30min, boxed). No variant promoted. → [`reports/maroy_experiment.md`](reports/maroy_experiment.md)
 
-### 4 · Nemmeno l'adattività: il walk-forward distrugge valore
+### 4 · Nor is it adaptivity: the walk-forward destroys value
 
-![Walk-forward trimestrale vs configurazione fissa](assets/walkforward_light.png)
+![Quarterly walk-forward vs fixed configuration](assets/walkforward_light.png)
 
-Riselezione trimestrale della variante migliore su Sharpe trailing 252g: **Sharpe 0.57 vs 0.92** della config fissa, 14 switch su 19, e la config migliore full-sample non viene selezionata *in nemmeno un trimestre* — la classifica a 1 anno tra varianti correlate è rumore. → [`reports/walkforward_experiment.md`](reports/walkforward_experiment.md)
+Quarterly reselection of the best variant on trailing 252-day Sharpe: **Sharpe 0.57 vs 0.92** for the fixed config, 14 switches out of 19, and the best full-sample config is not selected *in a single quarter* — the 1-year ranking among correlated variants is noise. → [`reports/walkforward_experiment.md`](reports/walkforward_experiment.md)
 
-## 🗂 Struttura
+## 🗂 Structure
 
 ```
 ├── src/
-│   ├── noise_area.py        # σₜ, bande con ancoraggio gap, VWAP di sessione
-│   ├── backtest.py          # engine event-driven: entry/exit/flip, costi azioni+futures
-│   ├── sizing.py            # vol targeting 2% + cap leva 4× (parametri congelati)
-│   ├── stats.py             # Sharpe, alfa/beta, trade stats, Deflated Sharpe Ratio
-│   ├── download_alpaca.py   # SPY 1-min (feed IEX, gratuito)
-│   ├── download_ib.py       # ES 1-min: contratti trimestrali + stitching + back-adjust
-│   ├── validate_data.py     # sanity check dati
-│   └── run_{validation,maroy,walkforward}.py   # pipeline riproducibili → reports/
-├── tests/                   # 48 test su dati sintetici (σₜ, gap, flip, exit, stitching…)
-├── reports/                 # risultati: validazione SPY, ES, Maróy, walk-forward
-├── docs/                    # SPEC, protocolli ex-ante congelati, CONCLUSIONS
-├── scripts/make_charts.py   # rigenera i grafici del README (temi chiaro/scuro)
-└── data/                    # roll table ES + VIX (i parquet 1-min si rigenerano con gli script)
+│   ├── noise_area.py        # σₜ, gap-anchored bands, session VWAP
+│   ├── backtest.py          # event-driven engine: entry/exit/flip, equity+futures costs
+│   ├── sizing.py            # 2% vol targeting + 4× leverage cap (frozen parameters)
+│   ├── stats.py             # Sharpe, alpha/beta, trade stats, Deflated Sharpe Ratio
+│   ├── download_alpaca.py   # SPY 1-min (IEX feed, free)
+│   ├── download_ib.py       # ES 1-min: quarterly contracts + stitching + back-adjustment
+│   ├── validate_data.py     # data sanity checks
+│   └── run_{validation,maroy,walkforward}.py   # reproducible pipelines → reports/
+├── tests/                   # 48 tests on synthetic data (σₜ, gaps, flips, exits, stitching…)
+├── reports/                 # results: SPY validation, ES, Maróy, walk-forward
+├── docs/                    # SPEC, frozen ex-ante protocols, CONCLUSIONS
+├── scripts/make_charts.py   # regenerates the README charts (light/dark themes)
+└── data/                    # ES roll table + VIX (1-min parquets are rebuilt by the scripts)
 ```
 
 ## 🚀 Quickstart
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/                      # 48 test, dati sintetici (nessun dato esterno)
+python -m pytest tests/                      # 48 tests, synthetic data (no external data needed)
 
-# 1 · Scarica i dati — i file 1-min grezzi NON sono nel repo (ToS IB/CME e Alpaca)
-export ALPACA_API_KEY=... ALPACA_SECRET_KEY=...          # account paper gratuito
-python -m src.download_alpaca --symbol SPY --start 2016-01-01   # SPY, gratis
-python -m src.download_ib --port 4001                          # ES, richiede IB Gateway + sub CME
+# 1 · Get the data — raw 1-min files are NOT in the repo (IB/CME and Alpaca ToS)
+export ALPACA_API_KEY=... ALPACA_SECRET_KEY=...          # free paper account
+python -m src.download_alpaca --symbol SPY --start 2016-01-01   # SPY, free
+python -m src.download_ib --port 4001                          # ES, needs IB Gateway + CME sub
 
-# 2 · Pipeline di validazione riproducibili → reports/
+# 2 · Reproducible validation pipelines → reports/
 python -m src.run_validation && python -m src.run_maroy && python -m src.run_walkforward
 
-# 3 · Backtest ES (dopo download_ib)
+# 3 · ES backtest (after download_ib)
 python - <<'PY'
 import pandas as pd
 from src.backtest import run_backtest, CostModel
@@ -108,25 +112,25 @@ print(trade_stats(res.trades, unit_multiplier=50.0))
 PY
 ```
 
-## 📚 Dati
+## 📚 Data
 
-| Fonte | Strumento | Periodo | Note |
+| Source | Instrument | Period | Notes |
 |---|---|---|---|
-| Interactive Brokers | ES futures, 1-min | mag 2024 → lug 2026 | 9 contratti trimestrali, roll al volume crossover, back-adjust additivo ([roll table](data/es_1min_rolls.csv)) |
-| Alpaca (IEX, free) | SPY, 1-min | lug 2020 → lug 2026 | ~3% del volume consolidato: VWAP approssimato (validato vs ES: irrilevante) |
-| CBOE | VIX daily | 1990 → oggi | tabelle per regime di volatilità |
+| Interactive Brokers | ES futures, 1-min | May 2024 → Jul 2026 | 9 quarterly contracts, volume-crossover roll, additive back-adjustment ([roll table](data/es_1min_rolls.csv)) |
+| Alpaca (IEX, free) | SPY, 1-min | Jul 2020 → Jul 2026 | ~3% of consolidated volume: approximated VWAP (validated against ES: immaterial) |
+| CBOE | VIX daily | 1990 → today | tables by volatility regime |
 
-> ⚠️ **I file 1-min grezzi non sono ridistribuiti** (ToS di IB/CME e Alpaca): si rigenerano con `download_ib.py` (ES, richiede account IB + sottoscrizione CME) e `download_alpaca.py` (SPY, chiave paper gratuita). Il repo include solo la [roll table](data/es_1min_rolls.csv) ES e il VIX (redistribuibile da CBOE).
+> ⚠️ **The raw 1-minute files are not redistributed** (IB/CME and Alpaca ToS): they are rebuilt with `download_ib.py` (ES, needs an IB account + CME subscription) and `download_alpaca.py` (SPY, free paper key). The repo only ships the ES [roll table](data/es_1min_rolls.csv) and the VIX series (redistributable from CBOE).
 
-## 🧭 Metodo anti-overfitting
+## 🧭 Anti-overfitting method
 
-Tutti i parametri della replica sono **congelati da spec** (lookback 14g, check 30min, vol target 2%, leva 4×). Ogni esperimento oltre la replica ha seguito lo stesso rituale, verificabile nella cronologia git:
+All the replication parameters are **frozen by spec** (14-day lookback, 30-min checks, 2% vol target, 4× leverage). Every experiment beyond the replication followed the same ritual, verifiable in the git history:
 
-1. 📝 **Protocollo congelato e committato prima di qualsiasi risultato** (lista chiusa di varianti, criteri di successo, regole di selezione meccaniche)
-2. 🧪 Esecuzione una sola volta, out-of-sample valutato una sola volta
-3. 📉 Correzione per test multipli (Deflated Sharpe Ratio, Bailey & López de Prado 2014)
-4. 📢 Pubblicazione di *tutti* i risultati, inclusi i fallimenti
+1. 📝 **Protocol frozen and committed before any result** (closed list of variants, success criteria, mechanical selection rules)
+2. 🧪 Run once, out-of-sample evaluated once
+3. 📉 Correction for multiple testing (Deflated Sharpe Ratio, Bailey & López de Prado 2014)
+4. 📢 Publication of *all* results, failures included
 
 ## ⚠️ Disclaimer
 
-Progetto di ricerca personale a scopo educativo. Nessun contenuto costituisce consulenza finanziaria; i risultati passati (e le repliche di paper) non predicono rendimenti futuri. Il campione recente mostra un edge compresso: vedi [`docs/CONCLUSIONS.md`](docs/CONCLUSIONS.md) prima di trarre conclusioni operative.
+Personal research project for educational purposes. Nothing here is financial advice; past results (and paper replications) do not predict future returns. The recent sample shows a compressed edge: read [`docs/CONCLUSIONS.md`](docs/CONCLUSIONS.md) before drawing any operational conclusion.

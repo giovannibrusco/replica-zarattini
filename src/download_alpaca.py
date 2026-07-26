@@ -1,18 +1,20 @@
-"""Download barre 1-minuto da Alpaca Market Data e salvataggio in parquet.
+"""Download 1-minute bars from Alpaca Market Data and store them as parquet.
 
-Uso:
+Usage:
     export ALPACA_API_KEY=...  ALPACA_SECRET_KEY=...
     python -m src.download_alpaca --symbol SPY --start 2016-01-01 \
         --out data/spy_1min.parquet
 
-Note:
-- feed "iex" (free tier): copre ~3% del volume; il VWAP e' approssimato.
-  Con abbonamento si puo' passare a --feed sip.
-- adjustment "split": prezzi split-adjusted ma non dividend-adjusted, cosi'
-  i livelli intraday corrispondono ai prezzi realmente scambiati (la
-  strategia e' flat overnight, i dividendi non maturano comunque).
-- il download procede per blocchi mensili con retry; alpaca-py gestisce
-  la paginazione interna.
+Notes:
+- the "iex" feed (free tier) covers ~3% of consolidated volume, so VWAP is
+  approximated. With a subscription you can switch to --feed sip.
+- the free tier only serves roughly the last ~6 years, so an earlier
+  --start silently yields a later first bar; check the printed range.
+- adjustment "split": prices are split-adjusted but not dividend-adjusted,
+  so intraday levels match actually traded prices (the strategy is flat
+  overnight, so dividends do not accrue anyway).
+- the download runs in monthly chunks with retries; alpaca-py handles
+  pagination internally.
 """
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ def fetch_minute_bars(
     secret_key: str | None = None,
     max_retries: int = 4,
 ) -> pd.DataFrame:
-    """Scarica barre a 1 minuto [start, end) e restituisce OHLCV in tz ET."""
+    """Download 1-minute bars over [start, end) and return OHLCV in ET."""
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame
@@ -45,7 +47,7 @@ def fetch_minute_bars(
     api_key = api_key or os.environ.get("ALPACA_API_KEY")
     secret_key = secret_key or os.environ.get("ALPACA_SECRET_KEY")
     if not api_key or not secret_key:
-        sys.exit("Servono ALPACA_API_KEY e ALPACA_SECRET_KEY nell'ambiente.")
+        sys.exit("ALPACA_API_KEY and ALPACA_SECRET_KEY must be set in the environment.")
 
     client = StockHistoricalDataClient(api_key, secret_key)
 
@@ -65,18 +67,18 @@ def fetch_minute_bars(
             try:
                 bars = client.get_stock_bars(req).df
                 break
-            except Exception as exc:  # rate limit / rete
+            except Exception as exc:  # rate limit / network
                 if attempt == max_retries:
                     raise
                 wait = 2 ** (attempt + 1)
-                print(f"  retry {attempt + 1} tra {wait}s: {exc}", file=sys.stderr)
+                print(f"  retry {attempt + 1} in {wait}s: {exc}", file=sys.stderr)
                 _time.sleep(wait)
         if not bars.empty:
             chunk = bars.reset_index(level="symbol", drop=True)
             chunks.append(chunk)
-            print(f"  {cur:%Y-%m}: {len(chunk)} barre")
+            print(f"  {cur:%Y-%m}: {len(chunk)} bars")
         else:
-            print(f"  {cur:%Y-%m}: vuoto")
+            print(f"  {cur:%Y-%m}: empty")
         cur = nxt
 
     if not chunks:
@@ -92,7 +94,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--symbol", default="SPY")
     p.add_argument("--start", default="2016-01-01")
-    p.add_argument("--end", default=None, help="default: oggi")
+    p.add_argument("--end", default=None, help="default: today")
     p.add_argument("--feed", default="iex", choices=["iex", "sip"])
     p.add_argument("--out", default=None, help="default: data/<symbol>_1min.parquet")
     args = p.parse_args()
@@ -108,10 +110,10 @@ def main() -> None:
     print(f"Download {args.symbol} 1-min [{start:%Y-%m-%d} -> {end:%Y-%m-%d}] feed={args.feed}")
     df = fetch_minute_bars(args.symbol, start, end, feed=args.feed)
     if df.empty:
-        sys.exit("Nessun dato ricevuto.")
+        sys.exit("No data received.")
     df.to_parquet(out)
-    print(f"Salvate {len(df):,} barre in {out}")
-    print(f"Range effettivo: {df.index[0]} -> {df.index[-1]}")
+    print(f"Saved {len(df):,} bars to {out}")
+    print(f"Actual range: {df.index[0]} -> {df.index[-1]}")
 
 
 if __name__ == "__main__":

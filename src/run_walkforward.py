@@ -1,11 +1,11 @@
-"""Esecuzione del walk-forward PROTOCOL_WALKFORWARD.md (commit dbf73fb).
+"""Execution of the PROTOCOL_WALKFORWARD.md walk-forward (commit dbf73fb).
 
-Fase 1: rendimenti giornalieri netti full-sample delle 27 varianti
-        (cache in data/wf_variant_returns.parquet: 27 backtest costosi)
-Fase 2: selezione trimestrale meccanica su Sharpe trailing 252g
-Fase 3: confronto con il controllo fisso sul periodo comune + report
+Phase 1: full-sample net daily returns of the 27 variants
+         (cached in data/wf_variant_returns.parquet: 27 costly backtests)
+Phase 2: mechanical quarterly selection on trailing 252-day Sharpe
+Phase 3: comparison with the fixed control over the common period + report
 
-Uso:
+Usage:
     python -m src.run_walkforward --data data/spy_1min.parquet \
         --out reports/walkforward_experiment.md
 """
@@ -25,8 +25,8 @@ from .stats import TRADING_DAYS
 
 ET = "America/New_York"
 
-EVAL_START = pd.Timestamp("2020-10-01", tz=ET)   # dopo il warmup indicatori
-WF_START = pd.Timestamp("2021-10-01", tz=ET)     # primo trimestre applicato
+EVAL_START = pd.Timestamp("2020-10-01", tz=ET)   # after the indicator warmup
+WF_START = pd.Timestamp("2021-10-01", tz=ET)     # first quarter applied
 WINDOW = 252
 MIN_OBS = 200
 
@@ -42,7 +42,7 @@ def _paper_distance(name: str) -> tuple:
 
 
 def variant_returns(bars: pd.DataFrame, cache: str) -> pd.DataFrame:
-    """Matrice giorni x 27 varianti dei rendimenti giornalieri netti."""
+    """Days x 27 variants matrix of net daily returns."""
     if os.path.exists(cache):
         return pd.read_parquet(cache)
     cols = {}
@@ -56,14 +56,14 @@ def variant_returns(bars: pd.DataFrame, cache: str) -> pd.DataFrame:
                 )
                 eq = res.equity[res.equity.index >= EVAL_START]
                 cols[name] = eq.pct_change()
-                print(f"  {name}: ok ({len(eq)} giorni)")
+                print(f"  {name}: ok ({len(eq)} days)")
     df = pd.DataFrame(cols).dropna(how="all")
     df.to_parquet(cache)
     return df
 
 
 def quarterly_marks(index: pd.DatetimeIndex) -> list[pd.Timestamp]:
-    """Primi giorni di trading di ogni trimestre >= WF_START."""
+    """First trading day of each quarter >= WF_START."""
     q = pd.Series(index, index=index).groupby(
         [index.year, index.quarter]
     ).first()
@@ -99,7 +99,7 @@ def main() -> None:
     rth = filter_rth(pd.read_parquet(args.data)).sort_index()
     rets = variant_returns(rth, args.cache)
 
-    # --- selezione trimestrale ---
+    # --- quarterly selection ---
     marks = quarterly_marks(rets.index)
     picks: list[tuple[pd.Timestamp, str]] = []
     for mark in marks:
@@ -108,7 +108,7 @@ def main() -> None:
         cands = sorted(sr[sr == best].index, key=_paper_distance)
         picks.append((mark, cands[0]))
 
-    # --- ricostruzione rendimenti walk-forward ---
+    # --- reconstruct the walk-forward returns ---
     wf = pd.Series(np.nan, index=rets.index[rets.index >= WF_START])
     for i, (mark, name) in enumerate(picks):
         end = picks[i + 1][0] if i + 1 < len(picks) else None
@@ -122,43 +122,43 @@ def main() -> None:
     switches = sum(1 for i in range(1, len(picks)) if picks[i][1] != picks[i - 1][1])
 
     print(f"\nWalk-forward: Sharpe {pw['sharpe']:+.2f}  CAGR {pw['cagr']:+.1%}  DD {pw['max_dd']:.1%}")
-    print(f"Controllo:    Sharpe {pc['sharpe']:+.2f}  CAGR {pc['cagr']:+.1%}  DD {pc['max_dd']:.1%}")
-    print(f"W1 {'PASS' if w1 else 'FAIL'} | switch: {switches}/{len(picks) - 1}")
+    print(f"Control:      Sharpe {pc['sharpe']:+.2f}  CAGR {pc['cagr']:+.1%}  DD {pc['max_dd']:.1%}")
+    print(f"W1 {'PASS' if w1 else 'FAIL'} | switches: {switches}/{len(picks) - 1}")
 
     # --- report ---
     buf = io.StringIO()
     w = buf.write
-    w("# Esperimento walk-forward — risultati (protocollo commit dbf73fb)\n\n")
-    w(f"Periodo valutato: {wf.index[0].date()} → {wf.index[-1].date()} "
-      f"({len(wf)} giorni). Selezione trimestrale su Sharpe trailing "
-      f"{WINDOW}g, universo = 27 varianti della lista chiusa.\n\n")
+    w("# Walk-forward experiment — results (protocol commit dbf73fb)\n\n")
+    w(f"Period evaluated: {wf.index[0].date()} → {wf.index[-1].date()} "
+      f"({len(wf)} days). Quarterly selection on trailing {WINDOW}-day "
+      "Sharpe, universe = the 27 variants of the closed list.\n\n")
 
-    w("## Confronto (stesso periodo)\n\n")
+    w("## Comparison (same period)\n\n")
     tab = pd.DataFrame(
         {
             "Walk-forward": {k: v for k, v in pw.items()},
-            "Controllo (paper fisso)": {k: v for k, v in pc.items()},
+            "Control (paper, fixed)": {k: v for k, v in pc.items()},
         }
     ).T
     tab["sharpe"] = tab["sharpe"].map("{:.2f}".format)
     tab["cagr"] = tab["cagr"].map("{:+.1%}".format)
     tab["max_dd"] = tab["max_dd"].map("{:.1%}".format)
     w(tab.to_markdown() + "\n\n")
-    w(f"**W1 (Sharpe WF > controllo): {'PASS' if w1 else 'FAIL'}**\n\n")
+    w(f"**W1 (WF Sharpe > control): {'PASS' if w1 else 'FAIL'}**\n\n")
 
-    w("## Varianti selezionate per trimestre\n\n")
-    sel = pd.DataFrame(picks, columns=["trimestre", "variante"])
-    sel["trimestre"] = sel["trimestre"].dt.date
+    w("## Variants selected per quarter\n\n")
+    sel = pd.DataFrame(picks, columns=["quarter", "variant"])
+    sel["quarter"] = sel["quarter"].dt.date
     w(sel.to_markdown(index=False) + "\n\n")
-    w(f"Switch effettuati: {switches} su {len(picks) - 1} riselezioni.\n\n")
+    w(f"Switches made: {switches} out of {len(picks) - 1} reselections.\n\n")
 
-    w("## Per anno (Sharpe)\n\n")
+    w("## Per year (Sharpe)\n\n")
     ya = pd.DataFrame(
         {
             "Walk-forward": wf.groupby(wf.index.year).apply(
                 lambda r: r.mean() / r.std() * np.sqrt(TRADING_DAYS)
             ),
-            "Controllo": ctrl.groupby(ctrl.index.year).apply(
+            "Control": ctrl.groupby(ctrl.index.year).apply(
                 lambda r: r.mean() / r.std() * np.sqrt(TRADING_DAYS)
             ),
         }
@@ -166,17 +166,17 @@ def main() -> None:
     w(ya.to_markdown() + "\n\n")
 
     if w1:
-        w("## Verdetto\n\nW1 superato: l'adattivita' aggiunge valore su questo "
-          "campione. Esito pilota da confermare sulla fase ES.\n")
+        w("## Verdict\n\nW1 met: adaptivity adds value on this sample. A pilot "
+          "result, to be confirmed on the ES phase.\n")
     else:
-        w("## Verdetto\n\nW1 fallito: la riselezione periodica non batte la "
-          "config fissa del paper. Come da protocollo il tema si chiude fino "
-          "alla fase ES; nessun altro design verra' provato su questi dati.\n")
+        w("## Verdict\n\nW1 failed: periodic reselection does not beat the "
+          "paper's fixed configuration. Per the protocol the topic is closed "
+          "until the ES phase; no other design will be tried on this data.\n")
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     with open(args.out, "w") as f:
         f.write(buf.getvalue())
-    print(f"Report scritto in {args.out}")
+    print(f"Report written to {args.out}")
 
 
 if __name__ == "__main__":

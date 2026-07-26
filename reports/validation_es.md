@@ -1,36 +1,36 @@
-# Validazione replica su ES (dati IB, contratto continuo costruito da spec)
+# Replication validation on ES (IB data, continuous contract built per spec)
 
-Dati: 9 contratti trimestrali ES da IB Gateway, stitching con **roll al
-volume crossover** e **back-adjustment additivo** (`src/download_ib.py`).
-Campione: **2024-05-30 → 2026-07-10** (530 giorni RTH, 205.530 barre).
+Data: 9 quarterly ES contracts from IB Gateway, stitched with a **volume-crossover
+roll** and **additive back-adjustment** (`src/download_ib.py`).
+Sample: **2024-05-30 → 2026-07-10** (530 RTH days, 205,530 bars).
 
-Riproduzione: i numeri di questo report escono da `run_backtest` su
-`data/es_1min.parquet` con `CostModel.es_futures()`, `unit_multiplier=50`,
-`initial_equity=1M` (granularita': ~300k$ di notional per contratto).
+Reproduction: the numbers in this report come from `run_backtest` on
+`data/es_1min.parquet` with `CostModel.es_futures()`, `unit_multiplier=50`,
+`initial_equity=1M` (granularity: ~$300k of notional per contract).
 
 ## Sanity check
 
-- 523/530 giorni con 390 barre piene; 7 mezze sedute note (3 lug, post
-  Thanksgiving, vigilia: 225 barre = chiusura futures 13:15) ✓
-- 0 duplicati, 0 prezzi non positivi, 236 barre a volume zero su 205k ✓
-- 8 roll, tutti il lunedì della settimana di scadenza (dove avviene il
-  crossover su ES), offset +50/+75 punti ≈ carry teorico a tassi 4-5% ✓
-- Unico spike >2%: 2025-04-09 13:19 (annuncio pausa dazi) — coincide al
-  minuto con il dataset SPY/Alpaca: i due dataset si cross-validano ✓
+- 523/530 days with a full 390 bars; 7 known half sessions (3 Jul, day after
+  Thanksgiving, Christmas Eve: 225 bars = 13:15 futures close) ✓
+- 0 duplicates, 0 non-positive prices, 236 zero-volume bars out of 205k ✓
+- 8 rolls, all on the Monday of expiry week (where the crossover happens on
+  ES), offsets +50/+75 points ≈ theoretical carry at 4-5% rates ✓
+- Only spike >2%: 2025-04-09 13:19 (tariff-pause announcement) — matches the
+  SPY/Alpaca dataset to the minute: the two datasets cross-validate ✓
 
-## Replica ES (slippage 0.25 tick, commissioni $0.85 + fees $1.40)
+## ES replication (slippage 0.25 tick, commissions $0.85 + fees $1.40)
 
 | | ES base | ES final | ES buy&hold |
 |---|---|---|---|
 | Sharpe | **0.52** | **-0.07** | 0.93 |
 | CAGR | +7.8% | -2.1% | +14.0% |
 | Max DD | -16.3% | -22.7% | -18.5% |
-| Alfa ann. (t-stat) | +10.0% (0.8) | +1.3% (0.1) | — |
+| Ann. alpha (t-stat) | +10.0% (0.8) | +1.3% (0.1) | — |
 | Trades | 326 | 477 | — |
 | Win rate | 53.4% | 37.7% | — |
 | Payoff | 0.96 | 1.60 | — |
 
-## Sensitivity slippage (final)
+## Slippage sensitivity (final)
 
 | Slippage | CAGR | Sharpe | Expectancy |
 |---|---|---|---|
@@ -38,10 +38,10 @@ Riproduzione: i numeri di questo report escono da `run_backtest` su
 | 0.5 tick | -2.6% | -0.11 | -0.80 bps |
 | 1.0 tick | -4.8% | -0.27 | -1.18 bps |
 
-I costi non sono la causa del risultato negativo (~0.4 bps/round trip a
-0.25 tick): è il segnale che nel periodo non paga.
+Costs are not the cause of the negative result (~0.4 bps/round trip at
+0.25 tick): it is the signal that does not pay in this period.
 
-## Il confronto decisivo: ES vs SPY, stesso periodo (2024-07-01 →)
+## The decisive comparison: ES vs SPY, same period (2024-07-01 →)
 
 | | Sharpe | CAGR | Trades | Win rate | Exp (bps) |
 |---|---|---|---|---|---|
@@ -50,30 +50,30 @@ I costi non sono la causa del risultato negativo (~0.4 bps/round trip a
 | ES final | -0.04 | -1.7% | 473 | 37.8% | -0.60 |
 | SPY final | 0.06 | -0.2% | 487 | 38.8% | -0.42 |
 
-**Correlazione dei rendimenti giornalieri ES-final vs SPY-final: 0.97.**
+**Correlation of daily returns, ES-final vs SPY-final: 0.97.**
 
-## Conclusioni
+## Conclusions
 
-1. **La domanda aperta è chiusa: il 2025-26 negativo NON era un artefatto
-   del feed IEX.** Con dati CME completi (VWAP e volumi veri) la strategia
-   produce risultati quasi identici (corr 0.97, stessi trade: 473 vs 487).
-   La compressione dell'edge nel periodo recente è reale.
-2. **La pipeline è cross-validata**: due fonti dati indipendenti (IB
-   futures con stitching nostro; Alpaca azionario) producono lo stesso
-   risultato — anche lo stitching è quindi implicitamente verificato.
-3. **Nel regime recente la gerarchia del paper si inverte**: la exit base
-   (trailing largo) batte la final (trailing stretto su VWAP/banda). Il
-   trailing stretto viene "shakerato" dai rientri intraday nella Noise
-   Area che poi ripartono. Con 2 anni di dati non è una conclusione
-   statistica, ma è coerente su entrambi gli strumenti.
-4. L'expectancy della base (+2.6 bps su ES) è nell'ordine della replica
-   Quantitativo (+2 bps), pur su un periodo diverso.
+1. **The open question is settled: the negative 2025-26 was NOT an artefact
+   of the IEX feed.** With complete CME data (real VWAP and volumes) the
+   strategy produces almost identical results (corr 0.97, same trades: 473 vs
+   487). The recent compression of the edge is real.
+2. **The pipeline is cross-validated**: two independent data sources (IB
+   futures with our own stitching; Alpaca equities) produce the same result —
+   so the stitching is implicitly verified too.
+3. **In the recent regime the paper's hierarchy inverts**: the base exit
+   (wide trailing stop) beats final (tight trailing on VWAP/band). The tight
+   stop gets shaken out by intraday re-entries into the Noise Area that then
+   resume. With 2 years of data this is not a statistical conclusion, but it
+   is consistent across both instruments.
+4. The base variant's expectancy (+2.6 bps on ES) is in line with the
+   Quantitativo replication (+2 bps), albeit over a different period.
 
-## Caveat
+## Caveats
 
-- Campione corto (25 mesi): niente confronto con i regimi 2008/2020, e le
-  differenze base/final non sono statisticamente conclusive.
-- Vincolo IB: contratti scaduti disponibili solo ~2 anni; per lo storico
-  lungo (2010+) resta necessario Databento (o equivalente).
-- Equity 1M per la granularita' dei contratti ES; con MES la granularita'
-  migliora di 10x a parita' di logica.
+- Short sample (25 months): no comparison with the 2008/2020 regimes, and the
+  base/final differences are not statistically conclusive.
+- IB constraint: expired contracts are only available for ~2 years; for the
+  long history (2010+) Databento (or equivalent) is still required.
+- 1M equity because of ES contract granularity; with MES the granularity
+  improves 10x for identical logic.

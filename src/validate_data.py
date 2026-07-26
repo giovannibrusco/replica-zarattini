@@ -1,15 +1,15 @@
-"""Sanity check dei dati (punto 1 del piano di validazione).
+"""Data sanity checks (step 1 of the validation plan).
 
-Uso:
+Usage:
     python -m src.validate_data data/spy_1min.parquet
 
-Controlli:
-- numero di giorni e barre per giorno (390 attese per sessione piena,
-  ~210 per le mezze sedute)
-- duplicati nell'indice
-- minuti mancanti dentro la sessione RTH
-- barre a volume zero, prezzi non positivi
-- spike di prezzo sospetti (rendimento 1-min > soglia)
+Checks:
+- number of days and bars per day (390 expected for a full session,
+  ~210 for half sessions)
+- duplicate index entries
+- missing minutes inside the RTH session
+- zero-volume bars, non-positive prices
+- suspicious price spikes (1-minute return above a threshold)
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from .noise_area import filter_rth, _day_key
 
 FULL_SESSION_BARS = 390
 HALF_SESSION_BARS = 210
-SPIKE_THRESHOLD = 0.02  # 2% in un minuto
+SPIKE_THRESHOLD = 0.02  # 2% in one minute
 
 
 def validate(df: pd.DataFrame, verbose: bool = True) -> dict:

@@ -1,4 +1,4 @@
-"""Test dello stitching (roll al volume crossover + back-adjust additivo)."""
+"""Stitching tests (volume-crossover roll + additive back-adjustment)."""
 
 import pandas as pd
 
@@ -39,14 +39,14 @@ class TestStitch:
 
         dc = cont["close"].groupby(cont.index.normalize()).last()
         et = "America/New_York"
-        assert dc[pd.Timestamp(DAYS[0], tz=et)] == 110.0  # front back-adjusted
+        assert dc[pd.Timestamp(DAYS[0], tz=et)] == 110.0  # front, back-adjusted
         assert dc[pd.Timestamp(DAYS[3], tz=et)] == 113.0  # roll day, adjusted
-        assert dc[pd.Timestamp(DAYS[4], tz=et)] == 114.0  # next, invariato
+        assert dc[pd.Timestamp(DAYS[4], tz=et)] == 114.0  # next contract, unadjusted
 
     def test_series_is_continuous_at_roll(self):
         cont, _ = stitch(_two_contracts())
         dc = cont["close"].groupby(cont.index.normalize()).last()
-        # nessun salto artificiale: la serie giornaliera cresce di 1 punto
+        # no artificial jump: the daily series rises by 1 point per day
         assert dc.diff().dropna().eq(1.0).all()
 
     def test_no_duplicate_bars(self):
@@ -56,6 +56,6 @@ class TestStitch:
 
 def test_quarterly_expiries_window():
     months = quarterly_expiries(pd.Timestamp("2026-07-11", tz="UTC"))
-    assert months[0] == "202409"   # ~2 anni indietro (limite IB)
-    assert months[-1] == "202609"  # front attuale
+    assert months[0] == "202409"   # ~2 years back (IB limit)
+    assert months[-1] == "202609"  # current front contract
     assert len(months) == 9

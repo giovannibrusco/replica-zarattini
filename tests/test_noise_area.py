@@ -5,7 +5,7 @@ import pytest
 from src.noise_area import build_indicators, compute_sigma, compute_vwap
 from .helpers import make_day, stack_days
 
-# giorni consecutivi di borsa (feb 2024, nessuna festivita')
+# consecutive trading days (Feb 2024, no holidays)
 DATES = [
     "2024-02-05", "2024-02-06", "2024-02-07", "2024-02-08", "2024-02-09",
     "2024-02-12", "2024-02-13", "2024-02-14", "2024-02-15", "2024-02-16",
@@ -15,8 +15,8 @@ DATES = [
 
 
 def _constant_move_days(moves: list[float], start_open: float = 100.0):
-    """Giorni in cui ogni barra ha |close/open_giorno - 1| = move costante,
-    concatenati senza gap (open del giorno = close del giorno prima)."""
+    """Days where every bar has |close/day_open - 1| = a constant move,
+    concatenated without gaps (day open = previous day's close)."""
     days, o = [], start_open
     for date, m in zip(DATES, moves):
         c = o * (1.0 + m)
@@ -27,13 +27,13 @@ def _constant_move_days(moves: list[float], start_open: float = 100.0):
 
 class TestSigma:
     def test_mean_over_lookback_excludes_current_day(self):
-        # 15 giorni: move del giorno i = 0.001*(i+1)
+        # 15 days: move of day i = 0.001*(i+1)
         moves = [0.001 * (i + 1) for i in range(15)]
         df = _constant_move_days(moves)
         sigma = compute_sigma(df, lookback=14, min_obs=14)
 
-        # al giorno 15 (indice 14): media dei move dei giorni 0..13,
-        # il move del giorno corrente (0.015) NON deve entrare
+        # on day 15 (index 14): mean of the day 0..13 moves; the current
+        # day's move (0.015) must NOT be included
         day15 = sigma[sigma.index.normalize() == sigma.index.normalize().unique()[14]]
         expected = np.mean(moves[:14])
         assert day15.notna().all()
@@ -46,12 +46,12 @@ class TestSigma:
         days = sigma.index.normalize()
         uniq = days.unique()
         for d in uniq[:14]:
-            assert sigma[days == d].isna().all(), f"giorno {d} doveva essere warmup"
+            assert sigma[days == d].isna().all(), f"day {d} should have been warmup"
         assert sigma[days == uniq[14]].notna().all()
 
     def test_rolling_window_drops_old_days(self):
-        # lookback=2: al giorno 3 sigma = media(move giorno 1, move giorno 2);
-        # il move enorme del giorno 0 deve essere fuori finestra
+        # lookback=2: on day 3 sigma = mean(day 1 move, day 2 move);
+        # day 0's huge move must be outside the window
         moves = [0.050, 0.001, 0.003, 0.002]
         df = _constant_move_days(moves)
         sigma = compute_sigma(df, lookback=2, min_obs=2)
@@ -62,8 +62,9 @@ class TestSigma:
 
 class TestBands:
     def test_gap_up_anchoring(self):
-        # 2 giorni "storici" con move 0.001 e 0.003 (sigma=0.002), poi gap up:
-        # prev close 100.4003, open 105 -> upper ancorato a 105, lower a prev close
+        # 2 "historical" days with moves 0.001 and 0.003 (sigma=0.002), then a
+        # gap up: prev close 100.4003, open 105 -> upper anchored to 105,
+        # lower to the previous close
         d0 = make_day(DATES[0], 100.0, 100.1)
         d1 = make_day(DATES[1], 100.1, 100.1 * 1.003)
         prev_close = 100.1 * 1.003
@@ -91,7 +92,7 @@ class TestBands:
         d0 = make_day(DATES[0], 100.0, 100.1)
         d1 = make_day(DATES[1], 100.1, 100.1 * 1.003)
         prev_close = 100.1 * 1.003
-        d2 = make_day(DATES[2], prev_close, prev_close * 1.001)  # nessun gap
+        d2 = make_day(DATES[2], prev_close, prev_close * 1.001)  # no gap
         ind = build_indicators(stack_days(d0, d1, d2), lookback=2, min_obs=2)
 
         day3 = ind[ind.index.normalize() == ind.index.normalize().unique()[2]]

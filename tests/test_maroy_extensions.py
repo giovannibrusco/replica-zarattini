@@ -1,5 +1,5 @@
-"""Test delle estensioni per il protocollo Maroy: griglia check parametrica,
-exit 'vwap', deflated Sharpe ratio."""
+"""Tests for the Maroy-protocol extensions: parametric check grid,
+'vwap' exit, deflated Sharpe ratio."""
 
 import numpy as np
 import pandas as pd
@@ -31,8 +31,8 @@ class TestCheckTimes:
 
 class TestIntervalParam:
     def test_60min_grid_skips_1030_signal(self):
-        # breakout visibile solo tra 10:30 e 10:59: la griglia a 60 minuti
-        # non lo vede (check a 10:00 e 11:00), quella a 30 si
+        # breakout visible only between 10:30 and 10:59: the 60-minute grid
+        # misses it (checks at 10:00 and 11:00), the 30-minute one sees it
         path = np.full(BARS_PER_DAY, O3)
         path[60:89] = 1.005 * O3  # 10:30..10:58
         res30 = _run(path)
@@ -41,7 +41,7 @@ class TestIntervalParam:
         assert res60.trades.empty
 
     def test_15min_grid_catches_earlier_entry(self):
-        path = path_step(O3, 1.005 * O3, 45)  # breakout alle 10:15
+        path = path_step(O3, 1.005 * O3, 45)  # breakout at 10:15
         res15 = _run(path, check_interval_min=15)
         res30 = _run(path)
         assert res15.trades.iloc[0]["entry_time"].time() == pd.Timestamp("10:15").time()
@@ -50,10 +50,10 @@ class TestIntervalParam:
 
 class TestVwapExit:
     def test_final_exits_on_band_while_vwap_holds(self):
-        # breakout a 10:00 a 1.003*O3, alle 10:30 il prezzo scende a
-        # 1.0019*O3: sotto upper (1.002) -> 'final' esce; ma sopra il VWAP
-        # (~1.0015 alle 10:30, e resta sotto 1.0019 tutto il giorno perche'
-        # trascinato dai 30 minuti iniziali a O3) -> 'vwap' tiene fino a EOD
+        # breakout at 10:00 to 1.003*O3; at 10:30 the price falls to
+        # 1.0019*O3: below upper (1.002) -> 'final' exits; but above VWAP
+        # (~1.0015 at 10:30, and it stays below 1.0019 all day because it is
+        # dragged down by the first 30 minutes at O3) -> 'vwap' holds to EOD
         path = path_step(O3, 1.003 * O3, 30)
         path[60:] = 1.0019 * O3
         final = _run(path, exit_mode="final")
@@ -63,10 +63,10 @@ class TestVwapExit:
         assert vwap.trades.iloc[0]["exit_reason"] == "eod"
 
     def test_vwap_exit_triggers_below_vwap(self):
-        # prezzo alto a lungo (VWAP sale ~1.005*O3), poi scende sotto il VWAP
-        # ma resta sopra lower: 'vwap' esce, 'base' no
+        # price high for a long time (VWAP rises to ~1.005*O3), then it falls
+        # below VWAP but stays above lower: 'vwap' exits, 'base' does not
         path = path_step(O3, 1.005 * O3, 30)
-        path[300:] = 1.000 * O3  # 14:30: sotto il VWAP (~1.0045), sopra lower
+        path[300:] = 1.000 * O3  # 14:30: below VWAP (~1.0045), above lower
         vwap = _run(path, exit_mode="vwap")
         base = _run(path, exit_mode="base")
         assert vwap.trades.iloc[0]["exit_reason"] == "trail"
@@ -83,7 +83,7 @@ class TestDeflatedSharpe:
         )
 
     def test_strong_signal_survives_deflation(self):
-        r = self._returns(0.003, 0.01)  # SR giornaliero ~0.23
+        r = self._returns(0.003, 0.01)  # daily SR ~0.23
         sr_obs = r.mean() / r.std()
         trials = np.concatenate(
             [np.random.default_rng(2).normal(0, 0.03, 26), [sr_obs]]
@@ -92,7 +92,7 @@ class TestDeflatedSharpe:
         assert out["dsr"] > 0.95
 
     def test_lucky_winner_fails_deflation(self):
-        # vincente con SR pari all'expected max di 27 trial rumorosi: DSR ~0.5
+        # a winner with SR equal to the expected max of 27 noisy trials: DSR ~0.5
         rng = np.random.default_rng(3)
         trials = rng.normal(0, 0.05, 27)
         sr_win = trials.max()
