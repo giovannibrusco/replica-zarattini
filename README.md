@@ -7,8 +7,14 @@
 
 Independent replication and validation of **Zarattini, Aziz & Barbon (2024)** — *"Beat the Market: An Effective Intraday Momentum Strategy for S&P500 ETF (SPY)"* ([SSRN 4824172](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4824172)) — across **two instruments and two independent data sources**, with anti-overfitting protocols frozen ex-ante.
 
-> 📌 **Not the same as [`qqq-opening-bias-5min`](https://github.com/giovannibrusco/qqq-opening-bias-5min)**: that repo replicates a *different* paper — Zarattini & Aziz (2023), [SSRN 4416622](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4416622), on **QQQ** opening-range bias with 5-minute bars. This repo replicates the **2024** Zarattini/Aziz/Barbon paper: Noise-Area intraday momentum on **SPY and ES futures**, 1-minute bars.
->
+📌 **How this differs from my other public repos** — three distinct projects, not variations of one:
+
+| Repo | What it is | Instrument · timeframe |
+|---|---|---|
+| **this one** | Replication of **Zarattini, Aziz & Barbon (2024)**, [SSRN 4824172](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4824172) — Noise-Area intraday momentum | SPY + ES · 1-min |
+| [`qqq-opening-bias-5min`](https://github.com/giovannibrusco/qqq-opening-bias-5min) | Replication of a **different** paper: Zarattini & Aziz (2023), [SSRN 4416622](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4416622) — opening-range bias | QQQ · 5-min |
+| [`nq-intraday-breakout`](https://github.com/giovannibrusco/nq-intraday-breakout) | Original strategy, not a paper replication | NQ |
+
 > 🇮🇹 Italian version of this README: [`docs/README.it.md`](docs/README.it.md).
 
 ![Growth of $1: final and base strategy vs SPY buy&hold, 2020-2026](assets/equity_spy_light.png)
